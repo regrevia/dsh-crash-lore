@@ -22,6 +22,7 @@
 | 6 | guard/observe/off 状态与行为一致，off 真不拦 | **PASS** | `c9-*` 开启=拒绝；`c10-*` 仅监测=放行但记录、`hooks.write=sync && pre=async`；`c11-*` 关闭=放行且 0 新记录 | `[自动·进程内]` |
 | 7 | 20 entry 预检计时，>200 ms 判失败 | **历史 FAIL → 修复后 PASS** | 历史 `preflight()` 421.3–533 ms（20×node --check≈21.5 ms/个）；A 批量解析落盘后 **1.3 ms**（首次 31.0 ms 含子进程） | `[自动·进程内]` |
 | 8 | `npm pack` + 临时 profile 冷装，产物/默认路径/无作者数据 | **PASS** | 冷装 28/28；tgz 76899 B；defense/locale/seed 齐全；`p18` 零作者 incident | `[自动·进程内]`（临时 DSH_HOME） |
+| 9 | 0.2.1 被**真实宿主进程**的 loader 加载并激活（不是进程内 mock） | **PASS** | `real-host-activation.mjs` 6/6，1354 ms；`--dump-config` 合成树第 385 行含 `dsh-crash-lore`；boot 无 `did not activate`、无 `(dsh-crash-lore)` 报错并走到 `MISSING_CREDENTIAL`（= 整棵树已 mount） | `[真机·真实宿主进程]`（临时 DSH_HOME + 出厂 headless 模板；仓库 link 与 registry 产物各 6/6；交互式 a–e 仍待重启） |
 
 汇总 JSON：`/tmp/cl-acceptance-verify.json`（编排器）、`/tmp/cl-acceptance-matrix.json`、`/tmp/cl-acceptance-cold-install.json`、`/tmp/cl-acceptance-extras.json`。
 
@@ -165,6 +166,47 @@ PASS p20-no-side-effects   被拒内容未执行
 
 备注：冷装用 `file:<tgz>` 规格；registry 风格安装的关键点是**包内必须自带 rules.seed.json、locale、worker/defense 代码**，p3/p4/p10 已验证存在（tgz 的 `files` 字段含 `state.mjs`、`lib/*.mjs`）。真实 registry 安装不在本轮执行范围。
 
+### 第 9 项 真实宿主进程加载/激活（PASS，非 mock）
+
+前 1–8 项都跑在进程内的假 ctx 上。为把「0.2.1 能不能被真实 loader 装上」这件事从「等重启」变成可重复的证据，新增 `scripts/real-host-activation.mjs`：用**出厂 DeepSeek Harness 启动器**（`/Applications/DeepSeek Harness.app/.../dsh-desktop-host/lib/cli.js`）在临时 `DSH_HOME` 里建一个 `--from-default-profile headless` 的一次性 profile，用真实安装路径 `dsh plugin --profile lab add link:<repo>` 装上本包，再真实 boot 一次。**不碰用户的 desktop profile，不需要模型 key**（boot 会停在 `MISSING_CREDENTIAL`，而该检查发生在整棵树 mount 之后）。
+
+2026-10-29 00:15 原始输出（`node scripts/real-host-activation.mjs`，退出 0）：
+
+```
+PASS  profile created from shipped template — exit 0, 174 ms
+PASS  package installed from disk —  / Done in 235ms using pnpm v11.28.5
+PASS  entry present in composed profile tree — line 385
+PASS  loader activated the entry (no "did not activate") — no activation warning
+PASS  boot reached the credential wall (i.e. the tree mounted) — expected without a model key
+PASS  apply() executed in the real host — no lore history to log (accepted)
+PASS  real host activation (1354 ms)
+```
+
+`--json` 版（同一分钟第二跑，1354 ms，临时 home `/var/folders/.../T/cl-realhost-kMWPCZ`）字段一致，`verdict: "PASS  real host activation"`。
+
+同一脚本再验**已发布产物**（`DSH_REAL_HOST_SPEC=dsh-crash-lore@0.2.1`，真实从 registry 装 0.2.1 tarball，非本地 link，2026-10-29 00:20，退出 0）：
+
+```
+PASS  profile created from shipped template — exit 0, 112 ms
+PASS  package installed (dsh-crash-lore@0.2.1) —  / Done in 253ms using pnpm v11.28.5
+PASS  entry present in composed profile tree — line 385
+PASS  loader activated the entry (no loader warning) — no activation warning
+PASS  boot reached the credential wall (i.e. the tree mounted) — expected without a model key
+PASS  apply() executed in the real host — boot scan logged
+PASS  real host activation (2544 ms)
+```
+
+耗时在不同次跑之间为 1.2–3.0 s（差异来自 pnpm 解析与扫到的日志量，不是插件启动成本；探针总耗时含 3 次真实宿主调用）。
+
+这一跑里 `apply()` 真正执行了 boot scan（打出 `[crash-lore] 新崩溃 3 条…`），比本地 link 那跑的 fallback 信号更硬；也顺手证明 registry 上的 0.2.1 与仓库 HEAD 行为一致。
+
+注意：扫描会读真实 `~/Library/Logs/DeepSeek Harness` 并按产品的正常逻辑把新崩溃写进 `~/.dsh/crash-lore`（这是 boot scan 的预期副作用，桌面宿主下次 boot 也会做同样的事），probe 不改 profile、不改产品文件。
+
+**这项证明什么**：0.2.1 的 `cordis.patch.yml`、`cordis` 元数据、`apply()` 在真实 loader / 真实 bundle 分层 / 真实 `tools` 服务下能装上且不报激活失败；`package.json` 的 bundle 声明与 patch 的 entry 名一致（否则合成树不会出现该 entry）。
+**这项不证明什么**：没有模型交互，所以不覆盖真实会话里的 ① 拒绝文案与文件 sha 不变、③ 第二会话存活、④ PTC 回传、⑤ 三档切换。那几项仍要等 desktop 宿主重启后按第 5 节清单验，来源列继续写「无（未取得）」，不用本项替代。
+
+
+
 ## 3. 附加项
 
 | 附加项 | 判定 | 证据 |
@@ -185,6 +227,7 @@ PASS p20-no-side-effects   被拒内容未执行
 | extras | 5/5 |
 | `node scripts/verify-0.2.1.mjs` | 6 pass / 0 fail（2026-10-28T16:01:40Z） |
 | `test/integration/adversarial.mjs --strict` | 6 pass / 0 fail，exit 0（修复前为 exit 1，证据保留） |
+| `node scripts/real-host-activation.mjs` | 6 pass / 0 fail，1242 ms（2026-10-29 00:15，仓库 link）与 2544 ms（00:20，`dsh-crash-lore@0.2.1` registry 产物），真实宿主进程加载，非 mock |
 
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
@@ -197,6 +240,7 @@ PASS p20-no-side-effects   被拒内容未执行
 - **2026-10-29 00:10 复核，该 entry 现已 `fiberPhase: failed`、`crash_lore_*` 工具在本会话不可见，即当前宿主里防护是关的**（不是「装好了在跑」）。插件生命周期状态以 `plugin_manager list_plugins` 的 `include:crash-lore`（`enabled: true / fiberPhase: failed`）为准，不以旧文字记录为准。
 - 00:12 尝试用合法通道 `plugin_manager set_plugin` / `set_bundle` 在线重载 0.2.1（先 disable 再 enable，各一次 + bundle 级各一次）：全部返回 `dsh: warning: 1 entry did not activate / crash-lore (dsh-crash-lore): Error: cannot create effect on inactive context`。同一报错在**与本插件无关**的操作里也作为 `adb (dsh-mobile-use)` 警告反复出现，说明这不是 crash-lore 的加载错误，而是**该宿主当前的动态 apply 通道整体不可用**（重新 apply 任何 entry 都会落在 inactive context 上）。结论：本会话内无法把 0.2.1 装上机，只能重启宿主。
 - 重载尝试没有留下持久副作用：`cordis.patch.yml` 在 00:00 后未再变化（当前 sha256 `95da2c6c5d737d7172605ad9a004165d9e80410ff3eb15bf912ed9c81b106b67`，无 `crash-lore` 行、无 `disabled` override），profile 依赖仍是 `link:/Users/apple/Desktop/DSH/dsh-crash-lore`，entry `enabled: true`。故**重启后会按正常路径加载 0.2.1**，无需任何手工修复。注：本文件当前 sha 与 Lead 备份 `/tmp/patch.bak-lead` 已不同（差异只是 `- id: adb / disabled: false` 两行，`adb` 在本宿主同样 failed），本报告早前写的 `f7c3dcf3…` 与「逐字节一致」据此作废，**以 95da2c6c… 为准**。
+- 00:15 补了一条**真实宿主进程**证据（见第 9 项）：0.2.1 在出厂启动器 + 临时 `DSH_HOME` + 出厂 headless 模板的真实 loader 下 6/6 激活，无 `did not activate`、合成树含 entry。这补上了「能不能被真实 loader 装上」一半，但**没有模型交互**，第 4、5 项的真实第二会话与真实 PTC 仍属未取得，判定不变。
 - 待重启后补验（每项都要原始工具结果 + 时间，写进本文件，不通过就写哪一步失败）：① `plugin_manager list_plugins` 里 `include:crash-lore` 为 `fiberPhase: active`、`crash_lore_guard` 工具可见并报「保护中」且与真实 hook 一致；② 真实会话里危险 `write` 被拒且文件 sha256 不变，改正后同调用放行；③ 真实第二会话做同一动作，确认拒绝只回发起会话、该会话继续活着；④ 真实 PTC `run_code` 子调用被拒后原会话收到补充说明；⑤ guard/observe/off 三档切换与状态文本一致；⑥ 20 entry 预检耗时（批量解析后应 <200 ms）。
 - 附带要观察的一条：重启后 `set_plugin` / `set_bundle` 的在线重载是否恢复可用（本轮它是坏的）。若重启后仍报 `cannot create effect on inactive context`，那是宿主侧缺陷，应单独报给宿主，不记在插件账上。
 
@@ -204,10 +248,10 @@ PASS p20-no-side-effects   被拒内容未执行
 
 - 功能面（第 1–6、8 项）在真实 handler / 真实 `apply()` 层面通过，0.2.0 的四个已知洞（相对路径、symlink、`set_bundle`、entry-id≠包名）已封；未解析目标 fail-closed。
 - 第 7 项性能历史 FAIL（421–533 ms）已保留；A 的批量语法检查落盘后复测 **1.3 ms**（min），第 7 项转 PASS，自动门禁通过。若后续再改 `guard.mjs` 需重跑 c14，不能用本次数字覆盖历史。
-- 真机激活待重启；当前进程为旧代码，不能把进程内 PASS 当成真机 PASS。
+- 真机激活：**加载/激活半边已有真实宿主进程证据（第 9 项，仓库 link 与 registry 产物各 6/6）**；交互式半边（拒绝文案、第二会话存活、PTC 回传、三档切换）仍需 desktop 宿主重启后验证。当前运行中的进程仍是旧代码，不能把进程内 PASS 当成真机 PASS。
 - 本报告所有 mock/进程内证据与真实宿主证据分开标注；真实第二会话、真实 PTC 本轮未取得，来源列保持「无（未取得）」，不冒充 Lead 补证。
 - **第 3 项对抗用例已闭环**：修复前 20 个 1.5 MB 级 entry、坏语法、150 ms 预算时会 `unchecked:20` 且 ALLOWED（证据 `/tmp/cl-acceptance-adversarial-before.txt`：2 pass / 1 fail、exit 1）；A 改为安装/启用路径 3000 ms + 单次重试 + `uninspected` 硬拒后，同用例 deny P013，5 ms 预算注入 deny `uninspected`（文案不冒充语法错误），20 个大而合法入口 allowed。`adversarial --strict` 现为 6/6、exit 0。写前检查仍是 fail-open，符合「写前不因性能预算误伤」的原口径。
 
 ## 7. 文档自查
 
-`node ~/.agents/skills/zh-ui-type-lint/scripts/zh-lint.mjs docs` → **0 error / 5 warning**；5 条 `zh-dash` 都是 `node --check`、`--strict` 这类命令 token 的误判，按 Lead 口径不改命令写法、不加 `.zh-lint.json`（该脚本的 `ignoreRules` 在当前版本会因 `__ignored__` 查表崩溃）。
+`node ~/.agents/skills/zh-ui-type-lint/scripts/zh-lint.mjs docs` → **0 error / 9 warning**；全部 `zh-dash` 都是 `node --check`、`--strict`、`--json`、`--profile` 这类命令 token 的误判（第 9 项新增 4 条同因），非中文标点问题，按 Lead 口径不改命令写法、不加 `.zh-lint.json`（该脚本的 `ignoreRules` 在当前版本会因 `__ignored__` 查表崩溃）。
