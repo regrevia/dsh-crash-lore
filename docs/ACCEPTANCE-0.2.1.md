@@ -357,12 +357,14 @@ PASS  benign write through a symlink still lands
 PASS  second plugin's entry is denied too (scope from the profile)   插件：dsh-crash-lore-second-probe … /private/var/folders/…/second-plugin/index.js
 PASS  second plugin file byte-identical afterwards  5b2df8275a78de7a → 5b2df8275a78de7a
 PASS  benign write beside the second plugin lands
+PASS  CLI check flags the same content (P013)  - [boot] P013 文件语法不合法（装上去必然激活失败） · index.js:1
+PASS  CLI and runtime agree on the rule id  cli P013 / host P013
 PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512862b92cd
 ```
 
 四份拒绝都带位置（解析后的真实 live 路径）、原因与建议，`code=CRASH_LORE_BLOCKED`、规则 `P013`；对第二个插件的拒绝里「插件：」写的是 `dsh-crash-lore-second-probe`，说明受保护集合来自 profile 里已安装的 entry，而不是本包自己的根目录；无害写到 scratch、其软链接、第二个插件旁都真的落盘。
 
-**证明什么**：① 目标解析的三个缺口（绝对路径、会话相对路径、软链接）在**真实宿主进程**里都被识别到同一个 live surface，不是只在进程内假 ctx 上成立；② 保护范围来自 profile 已安装 entry，第二个无关插件的入口同样被拒、其旁边无害文件照常放行；③ 软链接 / 相对路径没有绕过、也没有把无害文件误判。
+**证明什么**：① 目标解析的三个缺口（绝对路径、会话相对路径、软链接）在**真实宿主进程**里都被识别到同一个 live surface，不是只在进程内假 ctx 上成立；② 保护范围来自 profile 已安装 entry，第二个无关插件的入口同样被拒、其旁边无害文件照常放行；③ 软链接 / 相对路径没有绕过、也没有把无害文件误判；④ 同一段危险内容在**离线 `cli check`** 与**运行中 guard** 下落到同一个规则号 `P013`（CLI 与运行时同判定）。
 **不证明什么**：① 只覆盖 `write`，`set_plugin` entry id、`set_bundle` 以及**运行中**增删插件后的保护范围刷新仍只有进程内 `c-*` 证据（本项是 boot 时由 profile 合成的静态范围）；② 不是当前 desktop 实例（临时 profile）；③ 无关文件走软链接放行，只说明「解析后不在 live surface 就放过」，不覆盖外部编辑器绕过（见已知缺口）。
 
 ## 3. 附加项
@@ -388,7 +390,7 @@ PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512
 | `node scripts/real-host-activation.mjs` | 6 pass / 0 fail 两次：仓库 link（00:15，1.2–1.4 s）、`dsh-crash-lore@0.2.1` registry 产物（00:20，2.5–3.0 s），真实宿主进程加载，非 mock |
 
 | `node scripts/real-host-guard.mjs` | 19 pass / 0 fail（2026-10-28T16:26:50Z，2.1–2.9 s），真实宿主进程内对真实 `write` 调用做拦截决策，并走通被拒→修正→通过，非 mock；同一 fixture 在宿主进程里跑 20 entry 预检 3 次（1.34/1.51/76.82 ms，0 误报） |
-| `node scripts/real-host-resolve.mjs` | 20 pass / 0 fail（2.8 s），真实宿主进程内同一受保护文件的绝对路径 / 会话相对路径 / 软链接三种写法各被拒一次（`P013`），profile 里第二个无关插件的入口同样被拒且拒绝里写的是它自己的插件名，无害写 / 无害软链接写 / 第二插件旁无害写正常落盘，两个被拒文件 sha256 均不变，非 mock |
+| `node scripts/real-host-resolve.mjs` | 22 pass / 0 fail（2.3 s），真实宿主进程内同一受保护文件的绝对路径 / 会话相对路径 / 软链接三种写法各被拒一次（`P013`），profile 里第二个无关插件的入口同样被拒且拒绝里写的是它自己的插件名，无害写 / 无害软链接写 / 第二插件旁无害写正常落盘，两个被拒文件 sha256 均不变；同一段危险内容 `cli check` 与运行中 guard 同判 `P013`（CLI/运行时同判定），非 mock |
 | `node scripts/real-host-session.mjs` | 26 pass / 0 fail（2026-10-28T16:54:30Z 采样）：真实宿主 + 真实模型回合 + 真实 PTC：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活、`run_code` 子调用同样被拒并回传；追加三档模式（observe/off 落盘 + 仅监测日志）与模式配置断言，非 mock |
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
@@ -415,14 +417,14 @@ PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512
 - 附带要观察的一条：重启后 `set_plugin` / `set_bundle` 的在线重载是否恢复可用（本轮它是坏的）。若重启后仍报 `cannot create effect on inactive context`，那是宿主侧缺陷，应单独报给宿主，不记在插件账上。
 
 - **2026-10-29 01:2x 重启前基线（本会话在线只读复核，不写入）**：`plugin_manager list_plugins` 共 224 项，`include:crash-lore`（`dsh-crash-lore`, `patchId: crash-lore`）`enabled: true`、**`fiberPhase: failed`**；`cordis Inspect · Tool.listTools` 在本会话可见工具里**没有** `crash_lore_*`（0 处命中，全量目录在 `/tmp` 溢写里检索）；`Config.listConfigs` 里该 entry 为 `include:crash-lore`。`adb (dsh-mobile-use)` 同为 `failed`，与 00:12 判断一致：宿主动态 apply 通道整体坏。宿主 `pid 90362` 启动 17:28:53、截至 01:12 已存活 7h43m，而 `dsh-crash-lore` 是 18:54 才进入 desktop profile 的 bundle 列表，**本进程从未加载 0.2.1**。重启后复核口径：`fiberPhase: active` + `crash_lore_guard` 可见 + 工具输出「模式 开启 / 实际状态 正常」+ 另一会话真实危险写被拒且会话继续，四者齐了才算 ①。
-- 01:5x 补第四条**真实宿主进程**证据（见第 15 项）：同一受保护文件的绝对路径、**会话相对路径**（宿主 cwd=仓库父目录）、**软链接**三种写法在真实 `ctx.tools.execute()` 下各被拒一次（`P013`，载荷带位置/原因/建议），**另一个无关插件**的入口也照样被拒且拒绝里写的是它的插件名（保护范围来自 profile entry），无害写 / 无害软链接写 / 第二插件旁无害写正常落盘，两个被拒文件 sha256 均不变（`real-host-resolve.mjs` 20/20，2.8 s）。这把「目标解析缺口只在进程内验过」补成真实宿主证据；`set_plugin` entry id / `set_bundle` / **运行中**增删插件后的范围刷新仍是进程内证据。
+- 01:5x 补第四条**真实宿主进程**证据（见第 15 项）：同一受保护文件的绝对路径、**会话相对路径**（宿主 cwd=仓库父目录）、**软链接**三种写法在真实 `ctx.tools.execute()` 下各被拒一次（`P013`，载荷带位置/原因/建议），**另一个无关插件**的入口也照样被拒且拒绝里写的是它的插件名（保护范围来自 profile entry），无害写 / 无害软链接写 / 第二插件旁无害写正常落盘，两个被拒文件 sha256 均不变（`real-host-resolve.mjs` 22/22，2.3 s；同段内容 `cli check` 与运行中 guard 同判 `P013`）。这把「目标解析缺口只在进程内验过」补成真实宿主证据；`set_plugin` entry id / `set_bundle` / **运行中**增删插件后的范围刷新仍是进程内证据。
 
 
 ## 6. 结论与残留风险
 
 - 功能面（第 1–6、8 项）在真实 handler / 真实 `apply()` 层面通过，0.2.0 的四个已知洞（相对路径、symlink、`set_bundle`、entry-id≠包名）已封；未解析目标 fail-closed。其中相对路径与 symlink 两洞另由第 15 项在真实宿主进程里补证（绝对 / 相对 / 软链接三种写法同拒，第二个无关插件同拒），`set_bundle`、entry-id 与运行中范围刷新仍只有进程内证据。
 - 第 7 项性能历史 FAIL（421–533 ms）已保留；A 的批量语法检查落盘后复测 **1.3 ms**（min），第 7 项转 PASS，自动门禁通过。若后续再改 `guard.mjs` 需重跑 c14，不能用本次数字覆盖历史。
-- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 19/19）与目标解析/保护范围（第 15 项 20/20）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）；三档真实切换（⑤）、20 entry 真实耗时（⑥）、真实 PTC 回传（④）已由第 13/14/12 项在临时真实宿主内补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
+- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 19/19）与目标解析/保护范围/CLI-运行时同判定（第 15 项 22/22）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）；三档真实切换（⑤）、20 entry 真实耗时（⑥）、真实 PTC 回传（④）已由第 13/14/12 项在临时真实宿主内补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
 - 本报告所有 mock/进程内证据与真实宿主证据分开标注；真实第二会话、真实 PTC 本轮未取得，来源列保持「无（未取得）」，不冒充 Lead 补证。
 - **运行中增删插件的范围刷新仍未取得真机证据（本轮实测到窗口机制）**：让 fixture 在**存活的宿主进程里**跑 `plugin add` 加第三个插件后，宿主立刻把插件上下文重挂，fixture 的后续 `ctx.tools.execute()` 直接抛 `cannot get required service tools in inactive context`（20/24，失败原因记录在案，未改成 PASS）。这说明真实链路里改 profile 会触发重挂，guard 在该窗口内不工作，范围刷新实际上由重挂后的 re-apply 承担；因此 `markSurfacesDirty` / 2 s 节流刷新这条路径只有进程内 `c-*` 证据，不再声称真机覆盖。静态范围已由第 15 项真机覆盖（profile 里第二个无关插件同拒）。
 

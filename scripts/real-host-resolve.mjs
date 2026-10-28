@@ -119,6 +119,15 @@ function main() {
     add('symlink really points at the protected file', readlinkSync(link) === protectedFile, link);
     const relative = `${path.basename(repoRoot)}/index.js`;
 
+    /* CLI / runtime parity: the same dangerous text judged by `cli check` and by the live
+     * guard must land on the same rule id. */
+    const parityDir = path.join(home, 'parity-plugin');
+    mkdirSync(parityDir, { recursive: true });
+    writeFileSync(path.join(parityDir, 'package.json'), JSON.stringify({ name: 'dsh-crash-lore-parity-probe', version: '0.0.0', private: true, type: 'module', main: 'index.js' }, null, 2));
+    writeFileSync(path.join(parityDir, 'index.js'), '# not valid javascript\n');
+    const cliCheck = spawnSync(process.execPath, [path.join(repoRoot, 'cli.mjs'), 'check', parityDir], { encoding: 'utf8', timeout: 120000 });
+    const cliOut = `${cliCheck.stdout ?? ''}${cliCheck.stderr ?? ''}`;
+
     const dump = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
     add('loader composes all three entries', /\n- id: crash-lore\n/.test(dump.out) && /\n- id: crash-lore-resolve-probe\n/.test(dump.out) && /\n- id: crash-lore-second-probe\n/.test(dump.out), '');
 
@@ -163,6 +172,8 @@ function main() {
     add('benign write beside the second plugin lands', byLabel['second-plugin-benign']?.isError === false && existsSync(secondBenign), '');
     add('protected file is byte-identical afterwards', before === sha(protectedFile), `${before.slice(0, 16)} → ${sha(protectedFile).slice(0, 16)}`);
     const fatal = /FATAL|uncaughtException|worker thread exited/i.test(boot.out);
+    add('CLI check flags the same content (P013)', /P013/.test(cliOut), cliOut.trim().split('\n').filter((line) => /P013/.test(line))[0]?.trim().slice(0, 120) ?? '');
+    add('CLI and runtime agree on the rule id', /P013/.test(cliOut) && /P013/.test(text('absolute-deny')), 'cli P013 / host P013');
     add('no worker/loader crash during the probe', !fatal, '');
     const passed = checks.every((check) => check.ok);
     return report({
