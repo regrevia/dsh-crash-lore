@@ -51,3 +51,47 @@ test('checkSource still reports a passing source tree', () => {
   const findings = checkSource(path.join(PLUGIN, 'index.js').replace(/index\.js$/, ''), []);
   assert.equal(findings.length, 0);
 });
+
+function tempPlugin(files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-pf-lp-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+    name: 'legit', version: '0.0.1', type: 'module', main: './index.js', exports: { '.': './index.js' },
+  }));
+  for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), body);
+  return dir;
+}
+
+test('P016 不误报 createRequire —— ESM 里合法的 require 不需要拦', () => {
+  const dir = tempPlugin({
+    'index.js': [
+      "import { createRequire } from 'node:module';",
+      'const require = createRequire(import.meta.url);',
+      "export const name = 'legit';",
+      "export const inject = ['tools'];",
+      'export function apply(ctx) {',
+      "  const pkg = require('./package.json');",
+      '  ctx.logger.info(pkg.name);',
+      '}',
+    ].join('\n'),
+  });
+  const ids = preflight(dir).map((item) => item.ruleId);
+  assert.ok(!ids.includes('P016'), `createRequire 是官方写法，不该报 P016：${ids.join(',')}`);
+});
+
+test('P014 不误报函数体里的 throw —— 只有模块顶层抛错才是 boot 级', () => {
+  const dir = tempPlugin({
+    'index.js': [
+      "export const name = 'legit';",
+      "export const inject = ['tools'];",
+      'export function apply(ctx) {',
+      '  try {',
+      "    if (!ctx) throw new Error('no ctx');",
+      '  } catch (error) {',
+      '    ctx.logger.warn(error);',
+      '  }',
+      '}',
+    ].join('\n'),
+  });
+  const ids = preflight(dir).map((item) => item.ruleId);
+  assert.ok(!ids.includes('P014'), `apply() 内的 throw 被 try/catch 兜住，不该报 P014：${ids.join(',')}`);
+});

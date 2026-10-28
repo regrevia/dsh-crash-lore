@@ -398,10 +398,16 @@ export function autoEligible(home, name, options = {}) {
   let recent = 0;
   for (const incident of readIncidents(home)) {
     if (String(incident?.culprit?.name ?? '') !== String(name ?? '')) continue;
-    const when = Date.parse(incident?.lastTs || incident?.ts || '') || 0;
-    const count = Math.max(1, Number(incident?.count) || 1);
-    hits += count;
-    if (when >= cutoff) recent += count;
+    /* Count real events, not the lifetime aggregate: 100 old crashes plus one fresh one is not a loop. */
+    /* Legacy rows have no per-event list: assume their `count` events happened at lastTs. */
+    const fallback = incident?.lastTs || incident?.ts || '';
+    const times = Array.isArray(incident?.occurrenceTimes) && incident.occurrenceTimes.length
+      ? incident.occurrenceTimes
+      : Array.from({ length: Math.max(1, Number(incident?.count) || 1) }, () => fallback);
+    hits += Math.max(times.length, Number(incident?.count) || 1);
+    for (const time of times) {
+      if ((Date.parse(time) || 0) >= cutoff) recent += 1;
+    }
   }
   const ok = recent >= minHits;
   return {
@@ -453,6 +459,13 @@ export function runDoctor(options = {}) {
   const { plan } = planned;
   const at = stamp();
   const written = [];
+  const originals = new Map();
+  /* Track only files we actually overwrote: a file whose write threw still holds its old bytes. */
+  const writeFile = (file, text) => {
+    const before = fs.readFileSync(file, 'utf8');
+    fs.writeFileSync(file, text);
+    originals.set(file, before);
+  };
   try {
     // 1) 备份（先备份，再动手）
     for (const backup of plan.backups) {
@@ -467,10 +480,12 @@ export function runDoctor(options = {}) {
       if (plan.bundles.length && Array.isArray(pkg?.dsh?.profile?.bundles)) {
         pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((item) => !refersTo(item, plan.name));
       }
-      fs.writeFileSync(planned.culprit.pkgFile, `${JSON.stringify(pkg, null, 2)}\n`);
+      writeFile(planned.culprit.pkgFile, `${JSON.stringify(pkg, null, 2)}\n`);
     }
     // 3) cordis.patch.yml：只注释真凶条目
-    if (planned.patch && planned.patch.changed) fs.writeFileSync(planned.culprit.patchFile, planned.patch.text);
+    if (planned.patch && planned.patch.changed) {
+      writeFile(planned.culprit.patchFile, planned.patch.text);
+    }
     // 4) 隔离记录
     const state = readState(planned.home);
     const quarantine = Array.isArray(state.quarantine) ? state.quarantine : [];
@@ -489,7 +504,32 @@ export function runDoctor(options = {}) {
       written,
     };
   } catch (error) {
-    return { ok: false, action: 'failed', changed: false, reason: 'write_failed', message: `写入失败：${error?.message || error}（已写入的备份：${written.join('、') || '无'}）`, plan, lines };
+    /* A half-applied quarantine is worse than none: put every touched file back before reporting. */
+    const rolledBack = [];
+    for (const [file, text] of originals) {
+      try {
+        fs.writeFileSync(file, text);
+        rolledBack.push(file);
+      } catch {
+        /* keep going: report what still needs a human */
+      }
+    }
+    const failed = [...originals.keys()].filter((file) => !rolledBack.includes(file));
+    const kept = plan.backups.filter((backup) => fs.existsSync(backup));
+    const tail = failed.length
+      ? `；未能回滚：${failed.join('、')}（可用 ${kept.join('、') || '备份'} 手动恢复）`
+      : `；已回滚 ${rolledBack.length} 个文件，profile 保持原样`;
+    return {
+      ok: false,
+      action: 'failed',
+      changed: false,
+      rolledBack: rolledBack.length > 0 && !failed.length,
+      reason: 'write_failed',
+      message: `写入失败：${error?.message || error}${tail}`,
+      plan,
+      lines,
+      written,
+    };
   }
 }
 
@@ -501,6 +541,24 @@ function listBackups(profileDir, prefix) {
   } catch {
     return [];
   }
+}
+
+/**
+ * A quarantine that only commented patch entries leaves a `${PATCH_FILE}.bak-doctor-*` but no
+ * package.json backup. Find the newest patch backup that still holds an uncommented block for the name.
+ */
+function findPatchOnlyRestore(profileDir, patchFile, name) {
+  const currentText = readText(patchFile);
+  if (currentText == null) {
+    return { ok: false, reason: 'no_backup', message: `没有可恢复的 ${PATCH_FILE}（${patchFile}）` };
+  }
+  for (const backup of listBackups(profileDir, `${PATCH_FILE}.bak-doctor-`)) {
+    const backupText = readText(backup);
+    if (backupText == null) continue;
+    const result = restorePatchEntries(currentText, backupText, name);
+    if (result.ok && result.restored > 0) return { ok: true, ...result, backup };
+  }
+  return { ok: false, reason: 'no_backup', message: `没有找到 ${name} 的 doctor 备份（${profileDir}/${PKG_FILE}.bak-doctor-* 或 ${PATCH_FILE}.bak-doctor-*）` };
 }
 
 /**
@@ -528,14 +586,40 @@ export function restore(name, options = {}) {
       break;
     }
   }
+  const patchFile = path.join(profileDir, PATCH_FILE);
   if (!source) {
-    return { ok: false, action: 'none', changed: false, reason: 'no_backup', message: `没有找到 ${target} 的 doctor 备份（${profileDir}/${PKG_FILE}.bak-doctor-*）`, name: target };
+    /* Patch-only quarantine: only cordis.patch.yml was touched, so the package.json backup never exists. */
+    const patchOnly = findPatchOnlyRestore(profileDir, patchFile, target);
+    if (!patchOnly.ok) {
+      return { ok: false, action: 'none', changed: false, reason: patchOnly.reason, message: patchOnly.message, name: target };
+    }
+    if (options.dryRun === true) {
+      return { ok: true, action: 'dry-run', changed: false, dryRun: true, name: target, plan: { name: target, patchOnly: true, patchRestored: patchOnly.restored, backup: patchOnly.backup }, lines: [`将从 ${patchOnly.backup} 恢复 cordis.patch.yml 中 ${target} 的 ${patchOnly.restored} 个条目`] };
+    }
+    try {
+      fs.writeFileSync(patchFile, patchOnly.text);
+      const state = readState(home);
+      const quarantine = Array.isArray(state.quarantine) ? state.quarantine : [];
+      writeState({ ...state, quarantine: quarantine.filter((entry) => String(entry?.name ?? '') !== target) }, home);
+      return {
+        ok: true,
+        action: 'restored',
+        changed: true,
+        patchOnly: true,
+        name: target,
+        patchRestored: patchOnly.restored,
+        plan: { name: target, patchOnly: true, patchRestored: patchOnly.restored, backup: patchOnly.backup },
+        conclusion: `已恢复 ${target}：cordis.patch.yml 里 ${patchOnly.restored} 个条目已取消注释；重启 DSH 生效。`,
+        lines: [`- patch：${patchOnly.restored} 个条目已恢复`, patchOnly.backup],
+      };
+    } catch (error) {
+      return { ok: false, action: 'failed', changed: false, reason: 'write_failed', message: `恢复失败：${error?.message || error}` };
+    }
   }
 
   const deps = current.dependencies && typeof current.dependencies === 'object' ? current.dependencies : {};
   const backupBundles = Array.isArray(source.pkg?.dsh?.profile?.bundles) ? source.pkg.dsh.profile.bundles : [];
   const bundleKeys = backupBundles.filter((item) => item === target || refersTo(item, target));
-  const patchFile = path.join(profileDir, PATCH_FILE);
   const backupPatchFile = path.join(path.dirname(source.backup), path.basename(source.backup).replace(new RegExp(`^${PKG_FILE.replace('.', '\\.')}\\.bak-doctor-`), `${PATCH_FILE}.bak-doctor-`));
   let patchResult = { ok: true, changed: false, restored: 0 };
   if (fs.existsSync(patchFile) && fs.existsSync(backupPatchFile)) {
@@ -554,6 +638,12 @@ export function restore(name, options = {}) {
     return { ok: true, action: 'dry-run', changed: false, dryRun: true, name: target, plan, lines };
   }
 
+  const originals = new Map();
+  const writeFile = (file, text) => {
+    const before = fs.readFileSync(file, 'utf8');
+    fs.writeFileSync(file, text);
+    originals.set(file, before);
+  };
   try {
     const backupDeps = source.pkg.dependencies && typeof source.pkg.dependencies === 'object' ? source.pkg.dependencies : {};
     const merged = {};
@@ -570,8 +660,8 @@ export function restore(name, options = {}) {
       current.dsh.profile = current.dsh.profile || {};
       current.dsh.profile.bundles = bundles;
     }
-    fs.writeFileSync(pkgFile, `${JSON.stringify(current, null, 2)}\n`);
-    if (patchResult.ok && patchResult.changed) fs.writeFileSync(patchFile, patchResult.text);
+    writeFile(pkgFile, `${JSON.stringify(current, null, 2)}\n`);
+    if (patchResult.ok && patchResult.changed) writeFile(patchFile, patchResult.text);
     const state = readState(home);
     const quarantine = Array.isArray(state.quarantine) ? state.quarantine : [];
     const removed = quarantine.filter((entry) => String(entry?.name ?? '') === target || String(entry?.name ?? '') === source.key);
@@ -586,7 +676,16 @@ export function restore(name, options = {}) {
       lines: [`- 依赖：dependencies["${source.key}"] = ${source.spec}`, ...(bundleKeys.length ? [`- bundles：${bundleKeys.join(', ')}`] : []), path.dirname(source.backup)],
     };
   } catch (error) {
-    return { ok: false, action: 'failed', changed: false, reason: 'write_failed', message: `恢复失败：${error?.message || error}`, plan };
+    const failed = [];
+    for (const [file, text] of originals) {
+      try {
+        fs.writeFileSync(file, text);
+      } catch {
+        failed.push(file);
+      }
+    }
+    const tail = failed.length ? `；未能回滚：${failed.join('、')}` : '；已回滚改动';
+    return { ok: false, action: 'failed', changed: false, reason: 'write_failed', message: `恢复失败：${error?.message || error}${tail}`, plan };
   }
 }
 

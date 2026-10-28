@@ -7,7 +7,7 @@
                                      ├─ 每次会话注入提示词（预防）
                                      ├─ 导出到 dsh-lite-memory（跨会话记忆）
                                      ├─ 装插件前静态预检（拦截）
-                                     └─ 起不来时自动停用元凶（自愈）
+                                     └─ 起不来时停用元凶（自愈，需手动/循环确认）
 ```
 
 ## 装了什么
@@ -44,7 +44,7 @@ node cli.mjs restore <包名>          # 撤销停用
 
 默认 `$DSH_HOME/crash-lore/`（本机 `~/.dsh/crash-lore/`）：
 
-- `incidents.jsonl` — 归一化后的崩溃条目，按 fingerprint 去重
+- `incidents.jsonl` — 以 fingerprint 归并的崩溃条目：`occurrenceTimes` 保留每次发生的时间，`count` 是真实发生次数
 - `rules.json` — 规则库
 - `state.json` — 已扫日志的 mtime、停用记录
 
@@ -56,18 +56,23 @@ node cli.mjs restore <包名>          # 撤销停用
 - 只读日志，不改 DSH 安装目录；写盘只限 `$DSH_HOME/crash-lore/`。
 - `doctor` 只改 profile 的 `package.json` 与 `cordis.patch.yml` 里对应那一行，改前 `*.bak-<ts>` 备份；解析失败就放弃，不留半写状态。
 - 停用可撤销：`restore`，或手动把 `.bak-<ts>` 拷回。
-- 静态守卫只在低误报写法上开（如 `process.exit(`、插件顶层 `await`），不对「回调里抛异常」这类做静态判定。
+- 静态守卫只在低误报写法上开（如 `process.exit(`、模块顶层 `throw`、真实脱离 ESM 的 `require`）；`createRequire()` 与函数体里被 try/catch 兜住的 `throw` 不报。
 
 ## 自愈怎么做到的
 
-崩溃杀死了上一个宿主进程，日志留在磁盘上。下一次启动时本插件先跑一次扫描：
-新日志 → 条目 → 元凶插件 → 若上次是致命崩溃且 harness 反复起不来，`doctor` 把该插件从 profile 停用并备份。同一指纹重复出现时条目上的 `count` 累加，`--auto` 以它判断「一次性」还是「崩溃循环」。
-所以「自我阻止」不是拦截每一次崩溃，而是**同一形态的崩溃不会连续发生第二次**。
+崩溃杀死上一个宿主进程，日志留在磁盘上。下一次启动时本插件先跑一次扫描，把新日志变成条目并归因到元凶插件——**启动阶段只记录，不自动改 profile**。
+
+真起不来时用 `node cli.mjs doctor` 看计划、`--yes` 执行；`--auto` 只在确认崩溃循环时执行。停用前先备份 `package.json` / `cordis.patch.yml`，中途写失败会回滚已改文件，`restore <包名>` 可撤销（只注释过 patch 的隔离也能恢复）。
+
+同一指纹每次发生都会记进 `occurrenceTimes`，`--auto` 按 24 小时窗口内的真实事件数判断「一次性」还是「崩溃循环」，不拿历史累计次数充数。
+
+所以「自我阻止」不是拦截每一次崩溃，而是**同一形态的崩溃不会连续发生第二次**——代价是有一次手动执行的 doctor/heal。
 
 ## 测试
 
 ```bash
-node --test test/
+npm test               # node --test test/*.test.mjs
+node cli.mjs check .   # 用本插件的守卫预检它自己
 ```
 
 `test/core.test.mjs` 用合成日志样本覆盖三种日志格式、去重、脱敏、规则匹配与预检。

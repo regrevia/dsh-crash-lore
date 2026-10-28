@@ -17,6 +17,7 @@ import {
   upsertRule,
   renderLorePrompt,
   matchRules,
+  VERSION,
 } from '../core.mjs';
 import { checkSource } from '../guard.mjs';
 
@@ -196,4 +197,73 @@ test('scan counts repeated crashes instead of dropping them', () => {
   const after = readIncidents(home).find((item) => item.kind === 'uncaught-exception');
   assert.equal(after.count, 2, 'the same fingerprint seen again increments its count');
   assert.equal(readIncidents(home).length, 2);
+});
+
+test('frame: named frames `at Fn (file:///…:line:col)` parse to the source location', () => {
+  const home = tmpHome();
+  const log = `time: 2026-10-28T11:00:00.000Z
+source: host
+phase: running
+app: @deepseek-ai/dsh-desktop 0.2.1
+platform: darwin arm64
+node: 24.21.0
+
+--- error ---
+Error: boom
+    at DemoClass.close (file:///opt/demo-plugin/index.js:10:2)
+    at async run (/opt/demo-plugin/index.js:20:5)
+`;
+  const incident = parseArtifact(writeArtifact(home, 'crash-named-host.log', log));
+  assert.ok(incident, 'artifact should parse');
+  assert.equal(incident.frame, 'index.js:10', 'named frames must resolve, not come back null');
+  assert.equal(incident.frameFile, '/opt/demo-plugin/index.js');
+});
+
+test('scan: force rescan is idempotent, and a new event on a new day advances lastTs', () => {
+  const home = tmpHome();
+  const dirs = [path.join(home, 'logs')];
+  const base = HOST_LOG.replace('2026-10-28T09:15:33.952Z', '2026-10-20T09:15:33.952Z');
+  writeArtifact(home, 'crash-old-host.log', base);
+  scan({ home, dirs });
+  const before = readIncidents(home).find((item) => item.kind === 'uncaught-exception');
+  assert.equal(before.count, 1);
+  assert.equal(before.lastTs, before.ts);
+
+  writeArtifact(home, 'crash-new-host.log', HOST_LOG);
+  scan({ home, dirs });
+  const bumped = readIncidents(home).find((item) => item.kind === 'uncaught-exception');
+  assert.equal(bumped.count, 2, 'a genuinely new event counts');
+  assert.equal(bumped.lastTs, '2026-10-28T09:15:33.952Z', 'lastTs advances with the newest event');
+
+  const forced = scan({ home, dirs, force: true });
+  assert.equal(forced.bumped, 0, 're-parsing the same artifacts must not count them again');
+  const after = readIncidents(home).find((item) => item.kind === 'uncaught-exception');
+  assert.equal(after.count, 2);
+  assert.equal(after.occurrenceTimes.length, 2);
+});
+
+test('VERSION 与 package.json 一致（发版时不会忘了改常量）', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(VERSION, manifest.version);
+});
+
+test('scan migrates legacy aggregate rows：count 保留，补出每次发生的时间', () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, 'crash-lore'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'crash-lore', 'incidents.jsonl'), `${JSON.stringify({
+    id: 'inc_legacy',
+    ts: '2025-10-01T00:00:00.000Z',
+    lastTs: '2025-10-05T00:00:00.000Z',
+    count: 5,
+    fingerprint: 'legacy',
+    kind: 'crash',
+    signature: 'boom',
+    culprit: { type: 'plugin', name: 'dsh-bad' },
+    artifact: '/tmp/inc_legacy',
+  })}\n`);
+  scan({ home, dirs: [], force: true });
+  const [migrated] = readIncidents(home);
+  assert.equal(migrated.count, 5, '老条目的累计次数不能丢');
+  assert.equal(migrated.occurrenceTimes.length, 5);
+  assert.equal(migrated.lastTs, '2025-10-05T00:00:00.000Z');
 });

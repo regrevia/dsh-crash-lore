@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 export function storeDir(home = DEFAULT_HOME) {
@@ -186,18 +186,36 @@ function sectionOf(text, title) {
   return (end < 0 ? body : body.slice(0, end)).trim();
 }
 
-function firstFrame(text) {
-  /** Only frames that name a real source file: `at resolveConfig (…)` is a function, not a location. */
-  const re = /\n\s+at\s+(?:async\s+)?(?:file:\/\/)?([^\s()]+?)(?::(\d+))?(?::(\d+))?[\s)]/g;
-  for (const m of text.matchAll(re)) {
-    let file = m[1];
-    if (!/[/\\]/.test(file) && !/\.(?:mjs|cjs|js|ts)$/.test(file)) continue;
+function frameLocation(raw) {
+  /* `at Fn (file:///x.js:10:2)`, `at file:///x.js:10:2`, `at async Fn (/x.js:10:2)` all end the same:
+   * take the last parenthesised group, else the bare token, then split off :line:col. */
+  let token = String(raw ?? '').trim();
+  const paren = /\(([^()]*)\)\s*$/.exec(token);
+  if (paren) token = paren[1].trim();
+  token = token.replace(/^async\s+/, '').replace(/^new\s+/, '');
+  if (!token) return null;
+  const m = /^(.*?):(\d+)(?::(\d+))?$/.exec(token);
+  let file = (m ? m[1] : token).trim();
+  if (!file) return null;
+  if (file.startsWith('file://')) {
     try {
-      file = decodeURIComponent(file.replace(/^file:\/\//, '')).replace(/\?.*$/, '');
+      file = decodeURIComponent(file.slice('file://'.length));
     } catch {
-      file = file.replace(/^file:\/\//, '');
+      file = file.slice('file://'.length);
     }
-    return { file, line: m[2] ? Number(m[2]) : null, col: m[3] ? Number(m[3]) : null };
+  }
+  file = file.replace(/[?#].*$/, '');
+  /* Only frames that name a real source location: `at resolveConfig` alone is a function, not a file. */
+  if (!/[/\\]/.test(file) && !/^[A-Za-z]:\\/.test(file) && !/\.(?:mjs|cjs|js|jsx|ts|tsx)$/.test(file) && !/^node:/.test(file)) return null;
+  return { file, line: m ? Number(m[2]) : null, col: m?.[3] ? Number(m[3]) : null };
+}
+
+function firstFrame(text) {
+  for (const line of String(text ?? '').split('\n')) {
+    const m = /^\s+at\s+(.+)$/.exec(line);
+    if (!m) continue;
+    const frame = frameLocation(m[1]);
+    if (frame) return frame;
   }
   return null;
 }
@@ -437,6 +455,7 @@ export function parseArtifact(file) {
       signature: incident.signature,
       fingerprint,
       frame: incident.frame,
+      frameFile: incident.frameFile ?? null,
       message: incident.message,
       stack: incident.stack,
       culprit: incident.culprit,
@@ -597,11 +616,34 @@ export function rankRules(rules) {
   return [...rules].sort((a, b) => (SEVERITY_RANK[a.severity] ?? 3) - (SEVERITY_RANK[b.severity] ?? 3) || (b.hits ?? 0) - (a.hits ?? 0) || String(a.id).localeCompare(String(b.id)));
 }
 
+const OCCURRENCE_CAP = 100;
+
+/** Identity of one real crash event: same artifact + timestamp = the same event, never counted twice. */
+export function occurrenceId(incident) {
+  return shortHash(`${incident.fingerprint}|${incident.artifact}|${incident.ts}`);
+}
+
+/** Keep per-event identity alongside the aggregate, so force-rescan is idempotent. */
+export function normalizeOccurrence(incident) {
+  const ts = incident.lastTs || incident.ts || new Date(0).toISOString();
+  const count = Math.max(1, Number(incident.count) || 1);
+  const occurrenceIds = Array.isArray(incident.occurrenceIds) && incident.occurrenceIds.length
+    ? incident.occurrenceIds.slice(-OCCURRENCE_CAP)
+    /* Legacy aggregate rows carry no per-event list: synthesize `count` anonymous events so a
+     * migrated row keeps meaning "happened count times" instead of collapsing to one. */
+    : Array.from({ length: Math.min(count, OCCURRENCE_CAP) }, (_, at) => shortHash(`${incident.fingerprint}|${incident.artifact}|${ts}|legacy|${at}`));
+  const occurrenceTimes = Array.isArray(incident.occurrenceTimes) && incident.occurrenceTimes.length
+    ? incident.occurrenceTimes.slice(-OCCURRENCE_CAP)
+    : Array.from({ length: Math.min(count, OCCURRENCE_CAP) }, () => ts);
+  return { ...incident, occurrenceIds, occurrenceTimes, count, lastTs: occurrenceTimes[occurrenceTimes.length - 1] };
+}
+
 export function scan(options = {}) {
   const home = options.home ?? DEFAULT_HOME;
   const state = readState(home);
   const rules = readRules(home);
-  const stored = readIncidents(home);
+  const rawStored = readIncidents(home);
+  const stored = rawStored.map(normalizeOccurrence);
   const known = new Map(stored.map((incident) => [incident.fingerprint, incident]));
   const artifacts = fetchArtifacts(home, options.dirs);
   const added = [];
@@ -616,41 +658,45 @@ export function scan(options = {}) {
     const parsed = parseArtifacts(artifact.path);
     state.scanned[artifact.path] = artifact.mtimeMs;
     for (const incident of parsed) {
-    if (known.has(incident.fingerprint)) {
-      /* Same crash again: count it instead of dropping it, so doctor can tell a one-off from a loop. */
-      const seen = known.get(incident.fingerprint);
-      seen.count = (seen.count ?? 1) + 1;
-      seen.lastTs = incident.ts;
-      if (seen.id) bumped.set(seen.id, (bumped.get(seen.id) ?? 0) + 1);
-      continue;
-    }
-    const matched = matchRules(incident, rules);
-    incident.ruleIds = matched.map((rule) => rule.id);
-    for (const rule of matched) {
-      rule.hits = (rule.hits ?? 0) + 1;
-      rule.lastSeen = incident.ts;
-      rule.incidentIds = [...new Set([...(rule.incidentIds ?? []), incident.id])].slice(-20);
-    }
-    incident.count = 1;
-    incident.lastTs = incident.ts;
-    appendIncident(incident, home);
-    known.set(incident.fingerprint, incident);
-    added.push(incident);
-    if (!matched.length) unknown.push(incident);
+      if (known.has(incident.fingerprint)) {
+        /* Same crash shape again: a new event counts, re-parsing the same artifact does not. */
+        const seen = known.get(incident.fingerprint);
+        const id = occurrenceId(incident);
+        if (!seen.occurrenceIds.includes(id)) {
+          seen.occurrenceIds = [...seen.occurrenceIds, id].slice(-OCCURRENCE_CAP);
+          seen.occurrenceTimes = [...seen.occurrenceTimes, incident.ts].sort().slice(-OCCURRENCE_CAP);
+          seen.lastTs = seen.occurrenceTimes[seen.occurrenceTimes.length - 1];
+          seen.count = Math.max((seen.count ?? 1) + 1, seen.occurrenceIds.length);
+          if (seen.id) bumped.set(seen.id, (bumped.get(seen.id) ?? 0) + 1);
+        }
+        continue;
+      }
+      const matched = matchRules(incident, rules);
+      incident.ruleIds = matched.map((rule) => rule.id);
+      for (const rule of matched) {
+        rule.hits = (rule.hits ?? 0) + 1;
+        rule.lastSeen = incident.ts;
+        rule.incidentIds = [...new Set([...(rule.incidentIds ?? []), incident.id])].slice(-20);
+      }
+      const freshIncident = normalizeOccurrence({ ...incident, count: 1, occurrenceIds: [occurrenceId(incident)], occurrenceTimes: [incident.ts] });
+      appendIncident(freshIncident, home);
+      known.set(freshIncident.fingerprint, freshIncident);
+      added.push(freshIncident);
+      if (!matched.length) unknown.push(freshIncident);
     }
   }
 
   if (added.length) writeRules(rules, home);
-  if (bumped.size) {
-    const fresh = readIncidents(home);
-    for (const incident of fresh) {
-      const extra = bumped.get(incident.id);
-      if (extra) {
-        incident.count = (incident.count ?? 1) + extra;
-        if (!incident.lastTs) incident.lastTs = incident.ts;
-      }
+  const migrated = stored.some((incident, at) => JSON.stringify(incident) !== JSON.stringify(rawStored[at] ?? {}));
+  if (bumped.size || migrated) {
+    /* Persist the bumped aggregate (count, lastTs, per-event identity). */
+    const fresh = readIncidents(home).map(normalizeOccurrence);
+    const byId = new Map(fresh.map((incident) => [incident.id, incident]));
+    for (const incident of stored) {
+      if (!bumped.has(incident.id)) continue;
+      byId.set(incident.id, incident);
     }
-    rewriteIncidents(fresh, home);
+    rewriteIncidents([...byId.values()], home);
   }
   writeState(state, home);
   return { artifacts: artifacts.length, harvested, added, unknown, bumped: bumped.size, known: added.length - unknown.length, rules: rules.length };

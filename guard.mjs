@@ -210,6 +210,21 @@ export function startsRegex(text, index) {
   return true;
 }
 
+/** A throw is module-level only when it sits at brace depth 0; `try { ... } catch` inside apply() is fine. */
+function topLevelThrow(text) {
+  const lines = text.split('\n');
+  let depth = 0;
+  for (let at = 0; at < lines.length; at += 1) {
+    const line = lines[at];
+    if (depth === 0 && /^\s*(?:export\s+)?(?:async\s+)?throw\b/.test(line)) return { line: at + 1, text: line.trim() };
+    for (const ch of line) {
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth = Math.max(0, depth - 1);
+    }
+  }
+  return null;
+}
+
 function stripNoise(text) {
   const out = text.split('');
   let quote = null;
@@ -379,14 +394,18 @@ export function preflight(dir) {
     const text = stripNoise(raw);
     const isClient = /(?:^|[/\\])(?:client|web|ui)(?:[/\\]|\.)/.test(rel);
 
-    if (/(^|\n)\s*(?:export\s+)?(?:await|throw)\s+/m.test(text) && /(^|\n)\s*(?:export\s+)?throw\s+/m.test(text.split('\n').slice(0, 12).join('\n'))) {
-      findings.push(finding('boot', 'P014', '模块顶层有 throw', rel, 1, '顶层抛错会让整个插件激活失败', '挪进 apply() 或包 try/catch'));
+    const topThrow = topLevelThrow(text);
+    if (topThrow) {
+      findings.push(finding('boot', 'P014', '模块顶层有 throw', rel, topThrow.line, '顶层抛错会让整个插件激活失败', '挪进 apply() 或包 try/catch'));
     }
     if (/(^|\n)\s*(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s/m.test(text.split('\n').slice(0, 8).join('\n'))) {
       findings.push(finding('boot', 'P015', '模块顶层有裸 await', rel, 1, '`type: module` 顶层 await 会拖住 loader 并让激活顺序不可预测', '挪进 apply() 里的异步初始化'));
     }
-    if (/\brequire\s*\(/.test(text) && /(^|\n)\s*import\s/.test(text)) {
-      findings.push(finding('fatal', 'P016', 'ESM 文件里用了 require', rel, lineOf(text, text.search(/\brequire\s*\(/)), 'ESM 没有 require', '改成 import 或 createRequire'));
+    /* createRequire() is the sanctioned way to keep a require in ESM, including a local `require` binding. */
+    const bareRequire = /\brequire\s*\(/.exec(text);
+    const hasCreateRequire = /\bcreateRequire\s*\(|(?:const|let|var)\s+require\s*=/.test(text);
+    if (bareRequire && !hasCreateRequire && /(^|\n)\s*import\s/.test(text)) {
+      findings.push(finding('fatal', 'P016', 'ESM 文件里用了 require', rel, lineOf(text, bareRequire.index), 'ESM 没有 require', '改成 import 或 createRequire'));
     }
     if (/\b__dirname\b|\b__filename\b/.test(text) && /(^|\n)\s*import\s/.test(text)) {
       findings.push(finding('fatal', 'P017', 'ESM 文件里用了 __dirname/__filename', rel, lineOf(text, text.search(/__dirname|__filename/)), 'ESM 里这两个不存在', '用 import.meta.url + fileURLToPath'));

@@ -245,3 +245,50 @@ test('autoEligible only fires on a crash loop', () => {
   assert.equal(autoEligible(home, 'p-once', { minHits: 1 }).ok, true);
   assert.equal(autoEligible(home, 'p-unknown').ok, false);
 });
+
+test('restore：只注释过 patch 的隔离也能撤销（patch-only，不要求 package.json 备份）', () => {
+  const box = sandbox({ profile: 'profile-patchonly' });
+  const original = read(path.join(box.profileDir, 'cordis.patch.yml'));
+  const applied = runDoctor({ home: box.homeDir, profileDir: box.profileDir, yes: true });
+  assert.equal(applied.action, 'applied', JSON.stringify(applied));
+  assert.ok(read(path.join(box.profileDir, 'cordis.patch.yml')).includes('# - id: bad-plugin'));
+
+  const restored = restore('dsh-bad', { home: box.homeDir, profileDir: box.profileDir });
+  assert.equal(restored.ok, true, JSON.stringify(restored));
+  assert.equal(restored.patchOnly, true);
+  assert.equal(restored.patchRestored, 2, 'bad-plugin 与 insert 里的 bad-insert 两处都该恢复');
+  assert.equal(read(path.join(box.profileDir, 'cordis.patch.yml')), original, 'patch 应逐字节恢复成隔离前');
+  assert.equal(readJson(path.join(box.homeDir, 'crash-lore', 'state.json')).quarantine.length, 0);
+});
+
+test('写入中途失败：已改的文件回滚，profile 不留半套状态', () => {
+  const box = sandbox();
+  const pkgBefore = read(path.join(box.profileDir, 'package.json'));
+  const patchBefore = read(path.join(box.profileDir, 'cordis.patch.yml'));
+  fs.chmodSync(path.join(box.profileDir, 'cordis.patch.yml'), 0o444);
+
+  const result = runDoctor({ home: box.homeDir, profileDir: box.profileDir, yes: true });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.reason, 'write_failed');
+  assert.equal(result.changed, false);
+  assert.equal(result.rolledBack, true);
+  assert.equal(read(path.join(box.profileDir, 'package.json')), pkgBefore, 'package.json 必须回到原样');
+  assert.equal(read(path.join(box.profileDir, 'cordis.patch.yml')), patchBefore);
+  assert.equal((readJson(path.join(box.homeDir, 'crash-lore', 'state.json')).quarantine || []).length, 0, '失败时不写隔离记录');
+});
+
+test('autoEligible：24 小时窗口按真实事件时间算，历史 100 次 + 今天 1 次不算崩溃循环', () => {
+  const home = tmpHome();
+  const old = Array.from({ length: 100 }, (_, at) => new Date(Date.UTC(2025, 9, 1, 0, 0, at)).toISOString());
+  const recent = new Date(Date.now() - 60 * 1000).toISOString();
+  appendIncident({ id: 'inc_loop_old', ts: old[0], lastTs: recent, count: 101, occurrenceTimes: [...old, recent], fingerprint: 'old', kind: 'crash', signature: 'boom', culprit: { type: 'plugin', name: 'dsh-bad' } }, home);
+  const notLoop = autoEligible(home, 'dsh-bad');
+  assert.equal(notLoop.ok, false);
+  assert.equal(notLoop.recent, 1, '窗口内只有今天那一次');
+  assert.equal(notLoop.hits, 101);
+
+  const home2 = tmpHome();
+  const three = [0, 1, 2].map((at) => new Date(Date.now() - (at + 1) * 60 * 1000).toISOString());
+  appendIncident({ id: 'inc_loop_new', ts: three[0], lastTs: three[2], count: 3, occurrenceTimes: three, fingerprint: 'new', kind: 'crash', signature: 'boom', culprit: { type: 'plugin', name: 'dsh-bad' } }, home2);
+  assert.equal(autoEligible(home2, 'dsh-bad').ok, true, '窗口内真崩了 3 次才算循环');
+});
