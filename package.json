@@ -1,8 +1,7 @@
 {
   "name": "dsh-crash-lore",
   "version": "0.1.0",
-  "private": true,
-  "description": "把本机 DSH 崩溃日志沉淀成精简约束：注入提示词、装进长期记忆、安装前预检、起不来时自愈",
+  "description": "把 DSH 真实崩溃日志沉淀成精简约束，装插件前静态预检拦崩，起不来时受控自愈",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -34,5 +33,25 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/regrevia/dsh-crash-lore.git"
+  },
+  "homepage": "https://github.com/regrevia/dsh-crash-lore",
+  "bugs": {
+    "url": "https://github.com/regrevia/dsh-crash-lore/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "crash",
+    "preflight",
+    "doctor"
+  ],
+  "author": {
+    "name": "regrevia"
   }
 }
