@@ -163,6 +163,18 @@ function main() {
     const after = sha(target);
     add('denied file is byte-identical afterwards', before === after, `${before.slice(0, 16)} → ${after.slice(0, 16)}`);
 
+    /* Item 6/7: the shipped guard module's 20-entry preflight, timed inside the host. */
+    let preflight = null;
+    try {
+      preflight = JSON.parse(readFileSync(outFile.replace(/\.json$/, '-preflight.json'), 'utf8')).timing;
+    } catch {
+      preflight = null;
+    }
+    const samples = Array.isArray(preflight) ? preflight.filter((row) => typeof row.ms === 'number') : [];
+    const ms = samples.length ? Math.min(...samples.map((row) => row.ms)) : Infinity;
+    add('preflight ran in the host process over 20 entry files', samples.length === 3 && samples.every((row) => row.findings === 0), JSON.stringify(samples));
+    add('20-entry preflight stays under 200 ms', ms < 200, `${ms.toFixed(1)} ms (samples ${samples.map((row) => row.ms).join(', ')})`);
+
     const fatal = /FATAL|uncaughtException|worker thread exited/i.test(boot.out);
     add('no worker/loader crash during the probe', !fatal, '');
     globalThis.__clCalls = probe.results.map((entry) => ({ label: entry.label, isError: entry.isError === true, threw: entry.threw, head: String(entry.text ?? '').slice(0, 160) }));

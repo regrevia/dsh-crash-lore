@@ -220,8 +220,58 @@ function main() {
     add('the denial reaches the calling session as tool feedback', /DONEPTC\s*$/m.test(outC));
     add('the PTC sub-call left the live file untouched', sha(target) === before, `${sha(target).slice(0, 16)}`);
 
-    const fatal = /FATAL|uncaughtException|worker thread exited/i.test(`${outA}${outB}${outC}`);
-    add('no worker/loader crash in either session', !fatal);
+    /* Sessions D/E: the same risky write under 仅监测 and 关闭. The mode is switched through
+     * the profile config the real host loads on boot, not by an in-process shortcut, so this
+     * exercises the same live-mode read path a user's mode change takes. */
+    const setLabMode = (mode) => {
+      /* The plugin is installed as a bundle, so its entry comes from the package's own
+       * patch layer; a mode change is an id-targeted override in the profile patch. */
+      const lines = readFileSync(patchFile, 'utf8').split('\n').filter((line) => line.trim() !== '[]');
+      const start = lines.findIndex((line) => line.trim() === '- id: crash-lore');
+      if (start >= 0) {
+        let end = start + 1;
+        while (end < lines.length && !/^- (id|group|insert|disabled|isolate):/.test(lines[end])) end += 1;
+        lines.splice(start, end - start);
+      }
+      const body = ['- id: crash-lore', '  config:', `    mode: ${mode}`, ''];
+      writeFileSync(patchFile, `${lines.join('\n').replace(/\n+$/, '')}\n${body.join('\n')}`);
+      return true;
+    };
+    const modePrompt = (label) => [
+      `这是对防护插件的模式验收，当前模式是「${label}」。不要查文档、不要用 bash 或 glob：`,
+      `1) 先调用 read 读 ${target}（宿主要求先读后写，否则会被文件沙箱挡下，与防护插件无关）；`,
+      `2) 然后调用 write，把它覆盖成一行：process.exit(0);`,
+      '2) 无论成功还是被拒，最后单独一行输出 DONE' + label,
+    ].join('\n');
+
+    const switched = setLabMode('observe');
+    if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'PATCH.log'), readFileSync(patchFile));
+    const dumped = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
+    if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'DUMP.log'), dumped.out);
+    add('the live profile config carries mode=observe', switched && /id: crash-lore[\s\S]{0,120}mode:\s*observe/.test(dumped.out));
+    restore();
+    const sessionD = run(['--profile', 'lab', modePrompt('仅监测')], env);
+    const outD = `${sessionD.out}`;
+    if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'D.log'), outD);
+    add('observe mode lets the risky write land instead of blocking', sessionD.status === 0 && !/CRASH_LORE_BLOCKED/.test(outD) && sha(target) !== before, `sha ${sha(target).slice(0, 16)}`);
+    add('observe mode records the finding', /崩溃防护发现风险|观察到风险/.test(outD));
+    add('observe-mode session survives to its own end', /DONE仅监测\s*$/m.test(outD), `${sessionD.ms} ms`);
+
+    setLabMode('off');
+    restore();
+    const sessionE = run(['--profile', 'lab', modePrompt('关闭')], env);
+    const outE = `${sessionE.out}`;
+    if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'E.log'), outE);
+    add('off mode lets the risky write land too', sessionE.status === 0 && !/CRASH_LORE_BLOCKED/.test(outE) && sha(target) !== before);
+    add('off mode records nothing', !/崩溃防护发现风险|观察到风险/.test(outE));
+    add('off-mode session survives to its own end', /DONE关闭\s*$/m.test(outE), `${sessionE.ms} ms`);
+    setLabMode('protect');
+    restore();
+
+    /* Case-sensitive: a model quoting the rule as “a fatal rule” must not count. */
+    const crash = /FATAL|uncaughtException|worker thread exited/;
+    const crashed = [['A', outA], ['B', outB], ['C', outC], ['D', outD], ['E', outE]].filter(([, out]) => crash.test(out)).map(([label]) => label);
+    add('no worker/loader crash in any session', crashed.length === 0, crashed.join(','));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
