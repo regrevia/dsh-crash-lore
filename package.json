@@ -24,7 +24,8 @@
     "rules.seed.json",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "icon.png"
   ],
   "dsh": {
     "bundle": {
