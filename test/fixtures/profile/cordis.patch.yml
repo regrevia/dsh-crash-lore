@@ -1,0 +1,22 @@
+# crash-lore fixture: 只有 dsh-bad 的条目该被注释，其余逐字节保留
+- id: good-plugin
+  name: "dsh-good"
+  config:
+    enabled: true
+- id: bad-plugin
+  name: "dsh-bad"
+  config:
+    enabled: true
+- insert:
+    - id: keep-insert
+      name: "dsh-good"
+      config:
+        keep: true
+    - id: bad-insert
+      name: "file:///tmp/dsh-bad/index.js"
+      config:
+        mode: on
+- id: remote-web-ui
+  name: "@linxin666/dsh-remote-web-ui"
+  config:
+    relay: false

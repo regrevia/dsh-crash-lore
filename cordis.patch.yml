@@ -1,0 +1,4 @@
+- insert:
+    - id: crash-lore
+      name: dsh-crash-lore
+      config: {}

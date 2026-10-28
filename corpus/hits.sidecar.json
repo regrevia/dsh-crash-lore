@@ -1,0 +1,86 @@
+{
+  "note": "Hit accounting behind every incident/observation. counts are occurrences of the signature inside the artifact set, not file counts; artifacts lists every file that carries the same signature.",
+  "fingerprint": "sha256(`${kind}|${signature}|${frame}`).slice(0,12); incident id = `inc_` + fingerprint",
+  "incidents": {
+    "inc_42a251011fd8": {
+      "signature": "TypeError · this.holding is not a function",
+      "hits": 5,
+      "firstSeen": "2026-10-28T09:15:33.952Z",
+      "lastSeen": "2026-10-28T09:23:22.876Z",
+      "artifacts": [
+        "crash-2026-10-28T09-15-33-952Z-host.log",
+        "crash-2026-10-28T09-22-59-969Z-host.log",
+        "crash-2026-10-28T09-23-08-782Z-host.log",
+        "crash-2026-10-28T09-23-15-612Z-host.log",
+        "crash-2026-10-28T09-23-22-876Z-host.log"
+      ],
+      "keptArtifact": "crash-2026-10-28T09-23-22-876Z-host.log",
+      "dedupeReason": "identical culprit frame (sidecar.js:743 via WebSocket.<anonymous>); the newer four differ only in the stderr-suffix path below the child_process boundary",
+      "culpritFix": "dsh-inner-browser-use 0.34.34 — SidecarPage receives holdOf from Sidecar instead of calling this.holding()"
+    },
+    "inc_6f3d721bddaf": {
+      "signature": "web boot · 1 entry did not activate: dsh-vantage: failed",
+      "hits": 5,
+      "firstSeen": "2026-10-28T09:15:39.953Z",
+      "lastSeen": "2026-10-28T09:19:47.843Z",
+      "artifacts": [
+        "crash-2026-10-28T09-15-39-953Z-web-boot.log",
+        "crash-2026-10-28T09-15-46-268Z-web-boot.log",
+        "crash-2026-10-28T09-16-46-295Z-web-boot.log",
+        "crash-2026-10-28T09-18-43-516Z-web-boot.log",
+        "crash-2026-10-28T09-19-47-843Z-web-boot.log"
+      ],
+      "keptArtifact": "crash-2026-10-28T09-19-47-843Z-web-boot.log",
+      "dedupeReason": "byte-identical 636 B bodies (same entry, same failure)",
+      "culpritFix": "dsh-vantage 33fb8b7 — register the view through the slot graph so the client entry activates"
+    },
+    "inc_baa187281b4e": {
+      "signature": "SyntaxError · Unexpected end of input",
+      "hits": 3,
+      "firstSeen": "2026-10-28T09:15:33.952Z",
+      "lastSeen": "2026-10-28T09:15:33.952Z",
+      "artifacts": ["crash-2026-10-28T09-15-33-952Z-host.log"],
+      "keptArtifact": "crash-2026-10-28T09-15-33-952Z-host.log",
+      "dedupeReason": "3 occurrences in the renderer-console section of one artifact (same rev=f16dd6f32014, line 1497)",
+      "secondary": true
+    },
+    "inc_9c8c3f934d27": {
+      "signature": "TypeError · this.killStale is not a function",
+      "hits": 2,
+      "firstSeen": "2026-10-27T12:32:30.129Z",
+      "lastSeen": "2026-10-27T14:11:55.682Z",
+      "artifacts": [
+        "~/.dsh/sessions/--Users-apple-Desktop-odd-dsh-mobile-use--/session-a844c575-503d-4762-aece-5f5a1f3af97a/session.v4.jsonl.zstd"
+      ],
+      "keptArtifact": "~/.dsh/sessions/--Users-apple-Desktop-odd-dsh-mobile-use--/session-a844c575-503d-4762-aece-5f5a1f3af97a/session.v4.jsonl.zstd",
+      "dedupeReason": "two hosts (shell pid 7564 and 5774) exited on the same frame stream.js:827:33",
+      "confidence": "timestamp derived from the transcript; original crash-*.log files were rotated away, so ts is accurate to minutes"
+    },
+    "inc_b922a17703ff": {
+      "signature": "ValidationError · $.provider missing required value (at provider)",
+      "hits": 1,
+      "firstSeen": "2026-10-24T10:32:46.923Z",
+      "lastSeen": "2026-10-24T10:32:46.923Z",
+      "artifacts": ["~/.dsh/logs/startup-2026-10-24T10-32-46.923Z-38966271-93ee-4466-b5e4-333386b7c59c.log"],
+      "keptArtifact": "~/.dsh/logs/startup-2026-10-24T10-32-46.923Z-38966271-93ee-4466-b5e4-333386b7c59c.log",
+      "dedupeReason": "single startup log on disk for this profile"
+    }
+  },
+  "observations": {
+    "obs_46cccedd83c3": {"hits": 30, "artifact": "crash-2026-10-28T09-15-33-952Z-host.log", "section": "renderer-console"},
+    "obs_f64eec30c818": {"hits": 1, "artifact": "crash-2026-10-28T09-15-33-952Z-host.log", "section": "renderer-console"},
+    "obs_67b15826651d": {"hits": 1, "artifact": "crash-2026-10-28T09-15-33-952Z-host.log", "section": "renderer-console"},
+    "obs_be9f436290dd": {"hits": 7, "artifact": "~/.dsh/unlag-reload.log", "section": "reload"},
+    "obs_5d6df801706a": {"hits": 2, "artifact": "~/.dsh/sessions-quarantine/2026-10-25-Pet", "section": "store"},
+    "obs_c7f827952abc": {"hits": 1, "artifact": "https://github.com/deepseek-ai/deepseek-harness/discussions/1337", "section": "external"}
+  },
+  "totals": {
+    "crashArtifactsScanned": 10,
+    "startupLogsScanned": 1,
+    "pluginLogsScanned": 3,
+    "distinctIncidents": 5,
+    "distinctObservations": 6,
+    "incidentHits": 16,
+    "observationHits": 42
+  }
+}

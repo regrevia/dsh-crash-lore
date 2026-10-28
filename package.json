@@ -1,0 +1,38 @@
+{
+  "name": "dsh-crash-lore",
+  "version": "0.1.0",
+  "private": true,
+  "description": "把本机 DSH 崩溃日志沉淀成精简约束：注入提示词、装进长期记忆、安装前预检、起不来时自愈",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./core": "./core.mjs",
+    "./guard": "./guard.mjs",
+    "./cli": "./cli.mjs",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "bin": {
+    "crash-lore": "./cli.mjs"
+  },
+  "files": [
+    "index.js",
+    "core.mjs",
+    "guard.mjs",
+    "cli.mjs",
+    "memory.mjs",
+    "doctor.mjs",
+    "rules.seed.json",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

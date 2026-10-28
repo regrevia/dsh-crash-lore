@@ -1,0 +1,196 @@
+{
+  "generatedAt": "2026-10-28T10:45:00.000Z",
+  "host": "darwin arm64 / DeepSeek Harness 0.2.1-rc.3 / electron 44.7.0 / node 24.21.0",
+  "artifactRoots": [
+    "~/Library/Logs/DeepSeek Harness",
+    "~/.dsh/logs",
+    "~/.dsh/sessions",
+    "~/.dsh/sessions-quarantine",
+    "~/.dsh/profiles",
+    "~/.dsh/unlag-reload.log",
+    "~/Library/DiagnosticReports"
+  ],
+  "artifacts": [
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-15-33-952Z-host.log",
+      "bytes": 8083,
+      "mtime": "2026-10-28T17:15:33+0800",
+      "type": "crash-host",
+      "what": "Richest artifact: full host crash header + error block + renderer console section. Contains the 09:15:33 holding() fatal AND three secondary renderer signals (client.js syntax error x3, sidebar session released, ResizeObserver loop, passive listener preventDefault x30).",
+      "parsedInto": ["inc_42a251011fd8", "inc_baa187281b4e", "obs_46cccedd83c3", "obs_f64eec30c818", "obs_67b15826651d"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-15-39-953Z-web-boot.log",
+      "bytes": 636,
+      "mtime": "2026-10-28T17:15:39+0800",
+      "type": "crash-web-boot",
+      "what": "Short web-boot failure: same header shape, error block only, no renderer console section. dsh-vantage client entry failed to activate.",
+      "parsedInto": ["inc_6f3d721bddaf"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-15-46-268Z-web-boot.log",
+      "bytes": 636,
+      "mtime": "2026-10-28T17:15:46+0800",
+      "type": "crash-web-boot",
+      "what": "Second identical web-boot failure 7s later (retry after forced reload).",
+      "parsedInto": ["inc_6f3d721bddaf"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-16-46-295Z-web-boot.log",
+      "bytes": 636,
+      "mtime": "2026-10-28T17:16:46+0800",
+      "type": "crash-web-boot",
+      "what": "Third identical web-boot failure after a minute of reload attempts.",
+      "parsedInto": ["inc_6f3d721bddaf"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-18-43-516Z-web-boot.log",
+      "bytes": 636,
+      "mtime": "2026-10-28T17:18:43+0800",
+      "type": "crash-web-boot",
+      "what": "Fourth identical web-boot failure.",
+      "parsedInto": ["inc_6f3d721bddaf"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-19-47-843Z-web-boot.log",
+      "bytes": 636,
+      "mtime": "2026-10-28T17:19:47+0800",
+      "type": "crash-web-boot",
+      "what": "Fifth and newest identical web-boot failure; kept as the canonical artifact for the deduped incident.",
+      "parsedInto": ["inc_6f3d721bddaf"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-22-59-969Z-host.log",
+      "bytes": 1540,
+      "mtime": "2026-10-28T17:22:59+0800",
+      "type": "crash-host",
+      "what": "holding() fatal, no renderer console captured ('no error-level renderer console output was captured'). Host restarted and crashed 9s later.",
+      "parsedInto": ["inc_42a251011fd8"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-23-08-782Z-host.log",
+      "bytes": 1540,
+      "mtime": "2026-10-28T17:23:08+0800",
+      "type": "crash-host",
+      "what": "Same holding() fatal, second of the 4-crash burst.",
+      "parsedInto": ["inc_42a251011fd8"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-23-15-612Z-host.log",
+      "bytes": 1466,
+      "mtime": "2026-10-28T17:23:15+0800",
+      "type": "crash-host",
+      "what": "Same holding() fatal; 1466 B (stderr suffix differs, no stack tail difference in the culprit frame).",
+      "parsedInto": ["inc_42a251011fd8"]
+    },
+    {
+      "path": "~/Library/Logs/DeepSeek Harness/crash-2026-10-28T09-23-22-876Z-host.log",
+      "bytes": 1540,
+      "mtime": "2026-10-28T17:23:22+0800",
+      "type": "crash-host",
+      "what": "Newest artifact of the holding() cluster; kept as canonical artifact for inc_42a251011fd8.",
+      "parsedInto": ["inc_42a251011fd8"]
+    },
+    {
+      "path": "~/.dsh/logs/startup-2026-10-24T10-32-46.923Z-38966271-93ee-4466-b5e4-333386b7c59c.log",
+      "bytes": 7104,
+      "mtime": "2026-10-24T18:32:46+0800",
+      "type": "startup-diag",
+      "what": "Profile boot diary for profile 'bench': failed plugin table (agent-default-model, invalid config $.provider), waiting-for-services table (headless-runner -> agentDefaultModel), full validation stack, configurationPath, dshVersion/node version.",
+      "parsedInto": ["inc_b922a17703ff"]
+    },
+    {
+      "path": "~/.dsh/logs/chat-link-actions.log",
+      "bytes": 98304,
+      "mtime": "2026-10-28T17:00:00+0800",
+      "type": "plugin-log",
+      "what": "Plain append log of the dsh-chat-link-actions plugin (debug lines, no failure). Read only; nothing crash-shaped.",
+      "parsedInto": []
+    },
+    {
+      "path": "~/.dsh/logs/video-preview.log",
+      "bytes": 0,
+      "mtime": "2026-10-28T17:00:00+0800",
+      "type": "plugin-log",
+      "what": "Empty log file (dsh-video-preview). No events.",
+      "parsedInto": []
+    },
+    {
+      "path": "~/.dsh/unlag-reload.log",
+      "bytes": 284672,
+      "mtime": "2026-10-28T18:00:00+0800",
+      "type": "plugin-log",
+      "what": "dsh-unlag hot-reload log. No plugin-activation failures. Contains reload degradation: client module revision fetch failures, 6x 'the press was answered as failed and the page never said what it did', and UI-level reload notes.",
+      "parsedInto": ["obs_be9f436290dd"]
+    },
+    {
+      "path": "~/.dsh/sessions/--Users-apple-Desktop-odd-dsh-mobile-use--/session-a844c575-503d-4762-aece-5f5a1f3af97a/session.v4.jsonl.zstd",
+      "bytes": 0,
+      "mtime": "2026-10-27T00:00:00+0800",
+      "type": "session-transcript",
+      "what": "zstd-compressed session transcript that embeds the full text of two 2026-10-27 crash-*-host.log artifacts for the killStale() fatal (original log files are gone; rotated). Only surviving evidence for that incident.",
+      "parsedInto": ["inc_9c8c3f934d27"]
+    },
+    {
+      "path": "~/.dsh/sessions/--Users-apple-Desktop-odd-dsh-mobile-use--/efb64e61-b5df-415f-94ab-6a432b991367/session.v4.jsonl.zstd",
+      "bytes": 0,
+      "mtime": "2026-10-27T00:00:00+0800",
+      "type": "session-transcript",
+      "what": "Same project: holds the fault-boundary helper written after the killStale() crash and the memory entries that account for the three crash families (host timer, client bundle syntax, web boot).",
+      "parsedInto": ["inc_9c8c3f934d27"]
+    },
+    {
+      "path": "~/.dsh/sessions-quarantine/2026-10-25-Pet",
+      "bytes": 0,
+      "mtime": "2026-10-25T00:00:00+0800",
+      "type": "session-quarantine",
+      "what": "Directory holding 2 session dirs (session-8be71fcf, session-7d914680) with their .lock files: the store moved unreadable sessions here instead of deleting them. Date is the only timestamp.",
+      "parsedInto": ["obs_5d6df801706a"]
+    },
+    {
+      "path": "~/.dsh/profiles/desktop/cordis.patch.yml",
+      "bytes": 10599,
+      "mtime": "2026-10-28T18:10:00+0800",
+      "type": "profile-config",
+      "what": "Live desktop bundle patch. Config evidence: duplicate '- id: ui-chat' (lines 99 and 180, differing transcriptView config) and duplicate '- id: remote-web-ui' (line 9 enabled, line 208 'disabled: true'); 'insert:' of two file:// plugins with absolute ~ paths; apiKeyEnv-based credential reference (good pattern).",
+      "parsedInto": ["obs_be9f436290dd"]
+    },
+    {
+      "path": "~/.dsh/profiles/desktop/cordis.patch.yml.bak-20261024-112826",
+      "bytes": 0,
+      "mtime": "2026-10-24T11:28:26+0800",
+      "type": "profile-config-backup",
+      "what": "Patch history (9 id entries). Together with the four other .bak-* files it shows five config rewrites in four days; the 18/26/22-entry backups carry the same duplicated ids.",
+      "parsedInto": ["obs_be9f436290dd"]
+    },
+    {
+      "path": "~/.dsh/profiles/desktop/cordis.patch.yml.bak-page-181024",
+      "bytes": 0,
+      "mtime": "2026-10-24T18:10:00+0800",
+      "type": "profile-config-backup",
+      "what": "26 id entries; already had both duplicate ids (remote-web-ui, ui-chat).",
+      "parsedInto": ["obs_be9f436290dd"]
+    },
+    {
+      "path": "~/.dsh/profiles/desktop/cordis.patch.yml.bak-taskgraph-20261027-191140",
+      "bytes": 0,
+      "mtime": "2026-10-27T19:11:40+0800",
+      "type": "profile-config-backup",
+      "what": "22 id entries; same duplicate ids. Config keeps growing by copy-paste of whole blocks.",
+      "parsedInto": ["obs_be9f436290dd"]
+    },
+    {
+      "path": "~/Library/DiagnosticReports",
+      "bytes": 0,
+      "mtime": "2026-10-28T18:00:00+0800",
+      "type": "native-crash-dir",
+      "what": "Scanned for DeepSeek*/Electron*/node crash reports: none. No SIGSEGV/SIGABRT/native crash on this machine, so the native-crash class has zero local incidents.",
+      "parsedInto": []
+    }
+  ],
+  "notCopied": [
+    "~/.dsh/.credentials.yaml (+ .bak-20261025-222140) — credentials, never read into corpus",
+    "~/.dsh/remote-web-ui-devices.json, tinyfish.key.bad — credential material"
+  ],
+  "redaction": "No credential value appears in this corpus. Config evidence keeps the env-var NAME (COMPANY_LLM_TOKEN), never a value."
+}

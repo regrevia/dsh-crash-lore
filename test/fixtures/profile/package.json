@@ -1,0 +1,18 @@
+{
+  "name": "dsh-profile-desktop",
+  "private": true,
+  "dependencies": {
+    "dsh-good": "link:/tmp/dsh-good",
+    "dsh-bad": "link:/tmp/dsh-bad",
+    "other-pkg": "^1.2.3"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "dsh-good",
+        "dsh-bad"
+      ]
+    }
+  }
+}

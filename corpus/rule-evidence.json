@@ -1,0 +1,60 @@
+{
+  "note": "ruleId -> evidence ids. inc_* are normalized incidents; obs_* are observations (secondary). Rules whose only support is external/记忆 have empty arrays.",
+  "R001": [
+    "inc_42a251011fd8",
+    "inc_9c8c3f934d27"
+  ],
+  "R002": [
+    "inc_9c8c3f934d27"
+  ],
+  "R003": [
+    "inc_42a251011fd8"
+  ],
+  "R004": [
+    "inc_9c8c3f934d27"
+  ],
+  "R005": [],
+  "R006": [
+    "inc_b922a17703ff"
+  ],
+  "R007": [
+    "inc_b922a17703ff"
+  ],
+  "R008": [
+    "inc_6f3d721bddaf",
+    "inc_b922a17703ff"
+  ],
+  "R009": [
+    "inc_baa187281b4e"
+  ],
+  "R010": [],
+  "R011": [],
+  "R012": [],
+  "R013": [],
+  "R014": [],
+  "R015": [],
+  "R016": [
+    "obs_c7f827952abc"
+  ],
+  "R017": [
+    "obs_46cccedd83c3"
+  ],
+  "R018": [
+    "obs_f64eec30c818"
+  ],
+  "R019": [
+    "obs_67b15826651d"
+  ],
+  "R020": [
+    "obs_be9f436290dd"
+  ],
+  "R021": [
+    "obs_be9f436290dd"
+  ],
+  "R022": [
+    "obs_5d6df801706a"
+  ],
+  "R023": [
+    "obs_c7f827952abc"
+  ]
+}

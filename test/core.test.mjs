@@ -1,0 +1,199 @@
+/**
+ * core.mjs / guard.mjs unit tests. Fixtures are synthetic copies of the real artifact shapes,
+ * so the suite never reads this machine's logs.
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  parseArtifact,
+  redact,
+  fetchArtifacts,
+  scan,
+  readIncidents,
+  readRules,
+  upsertRule,
+  renderLorePrompt,
+  matchRules,
+} from '../core.mjs';
+import { checkSource } from '../guard.mjs';
+
+const HOST_LOG = `time: 2026-10-28T09:15:33.952Z
+source: host
+phase: running
+app: @deepseek-ai/dsh-desktop 0.2.1-rc.3
+platform: darwin arm64
+node: 24.21.0
+
+--- error ---
+Error: dsh desktop host exited with 1: dsh: fatal uncaught exception: TypeError: this.holding is not a function
+    at file:///opt/dev/dsh-inner-browser-use/sidecar.js?v=1:743:20
+    at WebSocket.<anonymous> (file:///opt/dev/dsh-inner-browser-use/sidecar.js?v=1:800:5)
+
+--- renderer console (error level, oldest first) ---
+[error] Uncaught SyntaxError: Unexpected end of input
+`;
+
+const WEB_LOG = `time: 2026-10-28T09:15:39.953Z
+source: web-boot
+phase: boot
+app: @deepseek-ai/dsh-desktop 0.2.1-rc.3
+
+--- error ---
+Error: web boot: 1 entry did not activate
+dsh-vantage: failed
+    at file:///Applications/DeepSeek%20Harness.app/Contents/Resources/app.asar/dsh/lib/main.js:12437:19
+
+--- renderer console (error level, oldest first) ---
+`;
+
+const STARTUP_LOG = `WARNING: Raw diagnostics may contain configuration or credential values from plugin errors.
+
+{
+  timestamp: '2026-10-24T10:32:46.923Z',
+  dshVersion: '0.2.1-rc.3',
+  profile: 'desktop',
+  error: StartupError: dsh: startup failed: 1 required plugin did not activate
+
+  Failed plugins (1):
+    agent-default-model
+      Package: @deepseek-ai/dsh-agent-default-model
+      ValidationError: invalid config:
+        - $.provider missing required value (at provider)
+          at resolveConfig (file:///Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-config/bin.js:252:11)
+}
+`;
+
+function tmpHome() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-'));
+  fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
+  return home;
+}
+
+function writeArtifact(home, name, body) {
+  const file = path.join(home, 'logs', name);
+  fs.writeFileSync(file, body);
+  return file;
+}
+
+test('host crash: kind, signature, culprit, frame', () => {
+  const home = tmpHome();
+  const profileDir = path.join(home, 'profiles', 'desktop');
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-inner-browser-use': 'link:/opt/dev/dsh-inner-browser-use' } }));
+  const previous = process.env.DSH_PROFILE_DIR;
+  process.env.DSH_PROFILE_DIR = profileDir;
+  try {
+    const file = writeArtifact(home, 'crash-2026-10-28T09-15-33-952Z-host.log', HOST_LOG);
+    const incident = parseArtifact(file);
+    assert.equal(incident.kind, 'uncaught-exception');
+    assert.equal(incident.signature, 'TypeError · this.holding is not a function');
+    assert.equal(incident.culprit.name, 'dsh-inner-browser-use');
+    assert.equal(incident.culprit.type, 'plugin');
+    assert.equal(incident.frame, 'sidecar.js:743');
+    assert.match(incident.id, /^inc_[0-9a-f]{12}$/);
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR;
+    else process.env.DSH_PROFILE_DIR = previous;
+  }
+});
+
+test('web boot failure: entry named as culprit', () => {
+  const home = tmpHome();
+  const incident = parseArtifact(writeArtifact(home, 'crash-2026-10-28T09-15-39-953Z-web-boot.log', WEB_LOG));
+  assert.equal(incident.source, 'web-boot-crash');
+  assert.equal(incident.kind, 'web-boot');
+  assert.equal(incident.signature, 'web boot · 1 entry did not activate: dsh-vantage: failed');
+  assert.equal(incident.culprit.name, 'dsh-vantage');
+});
+
+test('startup diagnostic: config validation, package culprit, timestamp', () => {
+  const home = tmpHome();
+  const incident = parseArtifact(writeArtifact(home, 'startup-2026-10-24T10-32-46.923Z-abc.log', STARTUP_LOG));
+  assert.equal(incident.source, 'startup-diag');
+  assert.equal(incident.kind, 'config-validation');
+  assert.equal(incident.signature, 'ValidationError · $.provider missing required value (at provider)');
+  assert.equal(incident.culprit.name, '@deepseek-ai/dsh-agent-default-model');
+  assert.equal(incident.ts, '2026-10-24T10:32:46.923Z');
+});
+
+test('redaction removes credential shapes but keeps the crash text', () => {
+  const text = redact('apiKey: sk-live-abcdefghijkl token=deadbeef123456 Authorization: Bearer abc.def.ghi TypeError: boom');
+  assert.ok(!text.includes('sk-live-abcdefghijkl'));
+  assert.ok(!text.includes('deadbeef123456'));
+  assert.ok(!text.includes('abc.def.ghi'));
+  assert.ok(text.includes('TypeError: boom'));
+});
+
+test('scan dedupes by fingerprint and is incremental', () => {
+  const home = tmpHome();
+  writeArtifact(home, 'crash-a-host.log', HOST_LOG);
+  writeArtifact(home, 'crash-b-host.log', HOST_LOG);
+  const dirs = [path.join(home, 'logs')];
+  const first = scan({ home, dirs });
+  assert.equal(first.harvested, 2);
+  assert.equal(first.added.length, 2, 'one host incident + one renderer incident, deduped across both files');
+  assert.deepEqual(first.added.map((item) => item.kind).sort(), ['plugin-activation', 'uncaught-exception']);
+  const second = scan({ home, dirs });
+  assert.equal(second.harvested, 0, 'unchanged artifacts are not re-read');
+  assert.equal(readIncidents(home).length, 2);
+});
+
+test('rules: upsert by title, match by signature regex, render budget', () => {
+  const home = tmpHome();
+  const rule = upsertRule({ title: '事件回调不要抛未捕获异常', signature: 'this\\.holding is not a function', severity: 'fatal', fix: '回调里 try/catch 或换异步边界' }, home);
+  assert.match(rule.id, /^R\d{3}$/);
+  const again = upsertRule({ title: '事件回调不要抛未捕获异常', cause: '新版接口改了', severity: 'fatal' }, home);
+  assert.equal(again.id, rule.id);
+  assert.equal(again.cause, '新版接口改了');
+  assert.equal(readRules(home).length, 1);
+  const incident = parseArtifact(writeArtifact(home, 'crash-c-host.log', HOST_LOG));
+  assert.deepEqual(matchRules(incident, readRules(home)).map((item) => item.id), [rule.id]);
+  const prompt = renderLorePrompt(readRules(home), { maxChars: 200 });
+  assert.ok(prompt.includes('事件回调不要抛未捕获异常'));
+  assert.ok(prompt.length <= 200 + 40);
+});
+
+test('fetchArtifacts only reports crash/startup logs', () => {
+  const home = tmpHome();
+  writeArtifact(home, 'crash-x.log', HOST_LOG);
+  writeArtifact(home, 'startup-y.log', STARTUP_LOG);
+  writeArtifact(home, 'notes.log', 'noise');
+  const names = fetchArtifacts(home, [path.join(home, 'logs')]).map((artifact) => path.basename(artifact.path));
+  assert.deepEqual(names.sort(), ['crash-x.log', 'startup-y.log']);
+});
+
+test('guard: source regex hits with line number, exclude respected', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-src-'));
+  fs.writeFileSync(path.join(dir, 'index.js'), 'export function apply(ctx) {\n  process.exit(1)\n}\n');
+  fs.writeFileSync(path.join(dir, 'safe.js'), '// process.exit(1) is discussed here\n');
+  const rules = [{
+    id: 'R001',
+    title: '插件里不要调 process.exit',
+    severity: 'fatal',
+    fix: '用 throw 交给宿主或 ctx.effect 清理',
+    guard: { kind: 'source-regex', pattern: 'process\\.exit\\(', message: '退出码由宿主决定', exclude: 'safe\\.js' },
+  }];
+  const findings = checkSource(dir, rules);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, 'index.js');
+  assert.equal(findings[0].line, 2);
+});
+
+test('scan counts repeated crashes instead of dropping them', () => {
+  const home = tmpHome();
+  const dirs = [path.join(home, 'logs')];
+  writeArtifact(home, 'crash-a-host.log', HOST_LOG);
+  const first = scan({ home, dirs });
+  assert.equal(first.added.length, 2);
+  const before = readIncidents(home).find((item) => item.kind === 'uncaught-exception');
+  assert.equal(before.count, 1);
+  writeArtifact(home, 'crash-b-host.log', HOST_LOG);
+  const second = scan({ home, dirs });
+  assert.equal(second.bumped, 2);
+  const after = readIncidents(home).find((item) => item.kind === 'uncaught-exception');
+  assert.equal(after.count, 2, 'the same fingerprint seen again increments its count');
+  assert.equal(readIncidents(home).length, 2);
+});
