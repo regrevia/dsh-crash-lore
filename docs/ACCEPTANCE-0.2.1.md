@@ -365,7 +365,7 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 | `node scripts/real-host-activation.mjs` | 6 pass / 0 fail 两次：仓库 link（00:15，1.2–1.4 s）、`dsh-crash-lore@0.2.1` registry 产物（00:20，2.5–3.0 s），真实宿主进程加载，非 mock |
 
 | `node scripts/real-host-guard.mjs` | 19 pass / 0 fail（2026-10-28T16:26:50Z，2.1–2.9 s），真实宿主进程内对真实 `write` 调用做拦截决策，并走通被拒→修正→通过，非 mock；同一 fixture 在宿主进程里跑 20 entry 预检 3 次（1.34/1.51/76.82 ms，0 误报） |
-| `node scripts/real-host-session.mjs` | 26 pass / 0 fail（2026-10-28T16:54:30Z 采样）：真实宿主 + 真实模型回合 + 真实 PTC：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活、`run_code` 子调用同样被拒并回传，非 mock |
+| `node scripts/real-host-session.mjs` | 26 pass / 0 fail（2026-10-28T16:54:30Z 采样）：真实宿主 + 真实模型回合 + 真实 PTC：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活、`run_code` 子调用同样被拒并回传；追加三档模式（observe/off 落盘 + 仅监测日志）与模式配置断言，非 mock |
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
 ## 5. 真机状态（待重启后验证，禁止写成已通过）
