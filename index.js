@@ -42,6 +42,7 @@ import {
   setHook,
   setMode,
 } from './state.mjs';
+import { apply as applyInstallCheck } from './install-check/index.mjs';
 
 export const name = 'dsh-crash-lore';
 /* Harness ≥ the 2026-09 tool contract: every tool must declare an output shape and a renderer.
@@ -100,6 +101,7 @@ function makeConfig() {
       promptChars: z.number().default(1000).description('提示词里规则的字数上限'),
       guard: z.boolean().description('旧开关，等价于 mode=off'),
       monitorOnly: z.boolean().description('旧开关，等价于 mode=observe'),
+      installCheck: z.boolean().default(true).description('装插件前先跟已装的比一遍：重名、缺依赖、版本、skill 撞车'),
     });
   } catch {
     return undefined;
@@ -216,7 +218,13 @@ export function apply(ctx, config = {}) {
     execute: async (args) => {
       const result = scan({ home, force: args?.force === true });
       const lines = [];
-      if (!result.harvested) lines.push('没有新的崩溃日志。');
+      const incidents = readIncidents(home);
+      if (!result.harvested) {
+        /* Nothing unparsed this call, but a boot scan may already have logged the last crash;
+         * saying only "没有新的崩溃日志" hides that the machine just died. Show the newest row. */
+        const newest = [...incidents].sort((a, b) => String(b.ts).localeCompare(String(a.ts)))[0];
+        lines.push(newest ? `没有未解析的日志。最近一条：${summarizeIncident(newest)}（证据 ${newest.artifact}）` : '没有新的崩溃日志。');
+      }
       for (const incident of result.added) {
         const rule = incident.ruleIds?.length ? ` 已知规则 ${incident.ruleIds.join(',')}` : ' 无对应规则';
         lines.push(`- ${summarizeIncident(incident)}${rule}`);
@@ -228,7 +236,7 @@ export function apply(ctx, config = {}) {
         text: lines.join('\n'),
         added: result.added.length,
         unknown: result.unknown.length,
-        total: readIncidents(home).length,
+        total: incidents.length,
       };
     },
   })), 'crash-lore: crash_lore_scan');
@@ -545,6 +553,11 @@ export function apply(ctx, config = {}) {
         return next();
       }
     }), 'crash-lore: ptc feedback');
+  }
+
+  /* 静态安装体检：装之前跟已装的比一遍（只加备注，不拦安装）。关掉防御时一并关闭。 */
+  if (config.installCheck !== false && modeOfConfig(config) !== 'off') {
+    ctx.effect(() => applyInstallCheck(ctx), 'crash-lore: install check');
   }
 
   /* Mode is the only writable knob, and it is written through the DSH config editor, so

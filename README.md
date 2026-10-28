@@ -19,6 +19,7 @@
 | 查规则 | 工具 `crash_lore_rules` |
 | 沉淀新规则 | 工具 `crash_lore_record` |
 | 装前预检 | 工具 `crash_lore_check`（包结构 / patch / 工具注册契约 / ESM 语法 + 本机规则） |
+| 装之前先跟已装的比一遍 | 工具调用后被动备注（重名 / 缺依赖 / 版本 / skill 撞车），不拦安装；`config.installCheck` 默认开 |
 | 运行中拦截危险改动 | 见「崩溃防护」一节；状态与拦截记录用工具 `crash_lore_guard` |
 | 导出清单 | 工具 `crash_lore_export`（默认只在对话里给 markdown；`target:'memory'` 才写长期记忆 global 层） |
 | 起不来时自愈 | 工具 `crash_lore_heal` / CLI `doctor` |
@@ -92,6 +93,12 @@ live 面 = profile 目录本身 + profile 里所有插件源码（含 `link:` �
 ```
 
 工具结果就是一次普通的报错，会话照常继续 —— 修完再提交同一个调用就通过。
+
+## 安装体检
+
+`dsh-install-check` 已并进这个插件：`plugin_manager` 装包时先跟已经装好的比一遍，装完把「撞了什么名、缺什么依赖、版本够不够、skill 有没有撞车」写成一条备注，随工具结果回到会话。它只加备注，从不让安装失败；读不到目标就静默跳过。
+
+开关：`config.installCheck`，默认开；`mode=off` 时一并关闭。三种结果写在备注里：完成未发现冲突 / 完成发现问题 / 检查未完成（25 秒预算）。
 
 开关：插件设置里选「开启 / 仅监测 / 关闭」三档，存进 `config.mode`；老配置里的 `guard: false`（关闭）、`monitorOnly: true`（仅监测）仍然认。仅监测用于先观察误报，只记录不拦。
 

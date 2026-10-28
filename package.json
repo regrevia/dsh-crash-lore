@@ -1,7 +1,7 @@
 {
   "name": "dsh-crash-lore",
-  "version": "0.2.1",
-  "description": "把 DSH 真实崩溃日志沉淀成精简约束，装插件前静态预检拦崩，起不来时受控自愈",
+  "version": "0.3.0",
+  "description": "把 DSH 真实崩溃日志沉淀成精简约束：装插件前静态预检拦崩、装完体检冲突，起不来时受控自愈",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -31,7 +31,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "icon.png"
+    "icon.png",
+    "install-check/"
   ],
   "dsh": {
     "bundle": {
