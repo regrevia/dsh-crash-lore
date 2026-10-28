@@ -18,13 +18,14 @@
 | 2 | 绝对/相对/symlink 同一文件判定一致，含 0.2.0 漏洞 | **PASS** | `c2-relative-path`、`c3-symlink-dir` 0.2.0 会 ALLOW，现均 deny P014 | `[自动·进程内]` |
 | 3 | 坏插件安装被拒；`set_plugin(entry id)`/`set_bundle` 不能绕过；超预算时 fail-closed | **PASS** | `c4`/`c5`/`c6`/`c7` 全 deny；adversarial 6/6：20×1.5 MB 坏入口 deny P013、5 ms 预算注入 deny `uninspected`、20 个大而合法入口 allowed | `[自动·进程内]` |
 | 4 | 其他会话的开发工作不受影响 | **PASS（进程内 + 真实会话 A/B）** | `c12-*` 三条；`real-host-session.mjs`：会话 A 被拒后继续完成修复，会话 B 独立起停、同样被拒且存活，两次都未改到 live 文件 | `[自动·进程内]` + `[真机·真实模型回合]`（第 11 项） |
-| 5 | PTC `run_code` 子调用拒绝能到达发起 agent | **PASS（进程内载荷）**；真机 PTC **未覆盖 · 待重启宿主后验证** | `c13-ptc-payload`：`code=CRASH_LORE_BLOCKED`、`rule=P014`、含位置/建议/重新提交 | `[自动·进程内]`；真机来源：无（未取得） |
+| 5 | PTC `run_code` 子调用拒绝能到达发起 agent | **PASS（进程内载荷 + 真实 PTC 子调用）** | `c13-ptc-payload`；第 12 项：真实 `DSH_TOOLS_MODE=ptc` 会话里 `run_code` 内的 `tools.write` 被拒，`code=CRASH_LORE_BLOCKED` / `P018` 回到发起会话，会话收尾 `DONEPTC`，文件未变 | `[自动·进程内]` + `[真机·真实模型回合·PTC]` |
 | 6 | guard/observe/off 状态与行为一致，off 真不拦 | **PASS** | `c9-*` 开启=拒绝；`c10-*` 仅监测=放行但记录、`hooks.write=sync && pre=async`；`c11-*` 关闭=放行且 0 新记录 | `[自动·进程内]` |
 | 7 | 20 entry 预检计时，>200 ms 判失败 | **历史 FAIL → 修复后 PASS** | 历史 `preflight()` 421.3–533 ms（20×node --check≈21.5 ms/个）；A 批量解析落盘后 **1.3 ms**（首次 31.0 ms 含子进程） | `[自动·进程内]` |
 | 8 | `npm pack` + 临时 profile 冷装，产物/默认路径/无作者数据 | **PASS** | 冷装 28/28；tgz 76899 B；defense/locale/seed 齐全；`p18` 零作者 incident | `[自动·进程内]`（临时 DSH_HOME） |
 | 9 | 0.2.1 被**真实宿主进程**的 loader 加载并激活（不是进程内 mock） | **PASS** | `real-host-activation.mjs` 6/6（单次 1.2–3.0 s）；`--dump-config` 合成树第 385 行含 `dsh-crash-lore`；boot 无 `did not activate`、无 `(dsh-crash-lore)` 报错并走到 `MISSING_CREDENTIAL`（= 整棵树已 mount） | `[真机·真实宿主进程]`（临时 DSH_HOME + 出厂 headless 模板；仓库 link 与 registry 产物各 6/6；交互式 a–e 仍待重启） |
 | 10 | 0.2.1 在**真实宿主进程**里对真实工具调用做出拦截决策（不是进程内 mock） | **PASS** | `real-host-guard.mjs` 17/17（2.1–2.9 s）：fixture 经宿主自己的 `ctx.tools.execute()` 写入，非法 JS 与合法 JS 崩溃形态各被拒一次（`P013`、`P018`），拒绝载荷带位置/原因/建议；同调用方改好后再写**成功**（被拒→修正→通过，一轮走通）；同进程的正常写成功（无过度拦截）；被拒前后 `index.js` sha256 `9428e512…` 一致；boot 无 worker/loader 崩溃 | `[真机·真实宿主进程]`（临时 DSH_HOME + 出厂 headless 模板 + 临时 fixture 包；无模型交互） |
 | 11 | **真实模型回合**里的拦截回传：危险写被拒、拒绝原文回到原会话、该会话继续干活；第二个会话独立起停 | **PASS** | `real-host-session.mjs` 15/15（两次会话 28.2 s / 6.5 s，总 3 次检查间隔 ~50 s）：会话 A 的 `write` 收到 `[CRASH_LORE_BLOCKED]`/`P018`/`建议：`，随后 read→write 原样写回成功、输出 `DONE`；会话 B 同样被拒并输出 `DONE2`；live 副本 `index.js` 前后 sha256 `9428e512…` 一致；无 worker/loader 崩溃 | `[真机·真实模型回合]`（临时 DSH_HOME + 临时 profile + 仓库副本作 live root；真实 company 路由、真实模型 `deepseek-v4.1-flash`） |
+| 12 | 真实 **PTC** `run_code` 子调用里的危险写被拒，拒绝回传发起会话 | **PASS** | `real-host-session.mjs` 会话 C（`DSH_TOOLS_MODE=ptc`，8.5 s）：`run_code` 程序内的 `tools.write` 拿到 `[CRASH_LORE_BLOCKED]`/`P018`，会话复述 code 与规则号后输出 `DONEPTC`，live 副本 sha256 不变 | `[真机·真实模型回合·PTC]`（同上临时宿主；模型只看得见 `run_code`） |
 
 汇总 JSON：`/tmp/cl-acceptance-verify.json`（编排器）、`/tmp/cl-acceptance-matrix.json`、`/tmp/cl-acceptance-cold-install.json`、`/tmp/cl-acceptance-extras.json`。
 
@@ -104,6 +105,8 @@ PASS c12-denial-scope        本次只新增 1 条拒绝记录（用 before/afte
 ### 第 5 项 PTC 子调用回传（PASS，进程内载荷）
 
 `c13-ptc-payload` 校验拒绝结构可跨 `run_code` 子调用返回发起方：`code=CRASH_LORE_BLOCKED`、`rule=P014`、含文件位置、整改建议、「改好后重新提交」。真实 PTC 调用由 Lead 补测，原文未附于本报告，故只标来源不加数字。
+
+真实 PTC 已由第 12 项补上（`DSH_TOOLS_MODE=ptc`，模型只看得见 `run_code`）：程序内的 `tools.write` 被同一 guard 拒绝，`code`/规则号回到发起会话，会话输出 `DONEPTC` 收尾。进程内载荷断言仍是结构契约的来源。
 
 ### 第 6 项 三模式（PASS）
 
@@ -292,6 +295,24 @@ Error: [CRASH_LORE_BLOCKED] 本次操作未执行。
 **这项不证明什么**：① 被验的是临时 profile + 仓库副本，**不是当前 desktop 会话里那份 `failed` 的实例**，所以「本机防护已开启」仍不成立；② 未覆盖真实 PTC `run_code` 子调用回传（第 5 项）、三档真实切换（第 6 项）、重启后 `set_plugin` 在线重载；③ 会话里的拒绝文字是模型复述，契约部分以第 10 项的原始载荷为准，不把模型措辞当归宿 API。
 **探针自身的前提**：① 必须显式给 `DSH_PROFILE_DIR=<临时 profile>`，否则插件 live surface 判定为空，危险写会先被宿主的 read-before-write 策略挡掉（与第 10 项同一前提）；② 需要 provider 路由与凭证，缺任一项脚本 exit 2 skip，不把「跑不起来」写成 PASS；③ 启动日志里另有一条与本插件无关的 `intellif` entry 导入失败（缺 `@deepseek-ai/dsh-llm`），来自继承的默认配置，不是 crash-lore 的激活错误——断言只认 `crash-lore` entry 与拒绝载荷。
 
+### 第 12 项 真实 PTC `run_code` 子调用回传（PASS，非 mock）
+
+同上探针的会话 C（`real-host-session.mjs` 19/19 那次，2026-10-28T16:54:30Z 采样，8.5 s）：子进程环境加 `DSH_TOOLS_MODE=ptc`，宿主只向模型暴露 `run_code`；提示要求程序里 `return await tools.write({file_path, content: 'process.exit(0);\n'})`，被拒则复述 code 与规则号，最后输出 `DONEPTC`。
+
+原始输出（节选）：
+
+```
+PASS  a PTC-mode session runs tool calls only through run_code — 8508 ms
+PASS  the PTC sub-call is denied by the same guard
+PASS  the denial reaches the calling session as tool feedback
+PASS  the PTC sub-call left the live file untouched — 9428e512862b92cd
+```
+
+会话记录 `C.log` 里依次是：`[crash-lore] 崩溃防护拦截 P018 @ dsh-crash-lore · …/live-plugin/index.js`、**错误 code**：`[CRASH_LORE_BLOCKED]`、**规则号**：`P018`（命中证据 `process.exit(0);`），最后 `DONEPTC`。
+
+**这项证明什么**：PTC 模式下模型唯一的入口是 `run_code`，子调用照样走同一个 `tools` 管线与本插件的 `guard`；拒绝不是抛成宿主崩溃，而是作为工具错误回到发起会话，会话据此收尾；被拒写入没有落到 live 文件。
+**这项不证明什么**：不覆盖三档真实切换（第 6 项）、当前 desktop 实例（仍是 failed 旧代码），也不覆盖重启后 `set_plugin` 在线重载。
+
 ## 3. 附加项
 
 | 附加项 | 判定 | 证据 |
@@ -315,7 +336,7 @@ Error: [CRASH_LORE_BLOCKED] 本次操作未执行。
 | `node scripts/real-host-activation.mjs` | 6 pass / 0 fail 两次：仓库 link（00:15，1.2–1.4 s）、`dsh-crash-lore@0.2.1` registry 产物（00:20，2.5–3.0 s），真实宿主进程加载，非 mock |
 
 | `node scripts/real-host-guard.mjs` | 17 pass / 0 fail（2026-10-28T16:26:50Z，2.1–2.9 s），真实宿主进程内对真实 `write` 调用做拦截决策，并走通被拒→修正→通过，非 mock |
-| `node scripts/real-host-session.mjs` | 15 pass / 0 fail（2026-10-28T16:42:43Z 采样，整跑 50.7 s），真实宿主 + 真实模型回合：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活，非 mock |
+| `node scripts/real-host-session.mjs` | 19 pass / 0 fail（2026-10-28T16:54:30Z 采样）：真实宿主 + 真实模型回合 + 真实 PTC：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活、`run_code` 子调用同样被拒并回传，非 mock |
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
 ## 5. 真机状态（待重启后验证，禁止写成已通过）
@@ -331,6 +352,8 @@ Error: [CRASH_LORE_BLOCKED] 本次操作未执行。
 - 00:23 又补一条真实宿主进程证据（见第 10 项）：真实 `tools.guard` 对真实 `write` 调用返回 `[CRASH_LORE_BLOCKED]`/`P013`，对合法 JS 但 `process.exit` 的形态返回 `P018`，同调用方改好后重写同一文件成功，同进程的正常写也成功，被拒文件 sha256 不变（`real-host-guard.mjs` 17/17）。这坐实了「拦截决策 + 拒绝载荷 + 修正后放行 + 不误伤 + 不杀宿主」半边；仍**没有模型交互**，同会话存活 / PTC 回传 / 三档切换 / 重启后 `set_plugin` 仍待重启。
 - 00:43 补第三条**真实宿主进程**证据，而且是**真实模型回合**（见第 11 项）：临时 `DSH_HOME` + 临时 `lab` profile + 仓库副本作 live root，模型被要求直接把 `process.exit(0);` 写进 live `index.js`，收到 `[CRASH_LORE_BLOCKED]`/`P018`/`建议：`，随后在同一会话里把原文 read→write 写回并 `DONE`；另一个独立会话重复同一动作，同样被拒并自己收尾 `DONE2`；副本 sha256 前后一致、宿主 exit 0、无崩溃（`real-host-session.mjs` 15/15）。这把第 5 节清单的 ②（拒绝文案 + sha 不变 + 改正后放行）与 ③（第二会话存活、拒绝只回发起会话）从「未取得」变成「已取得（临时宿主内）」；**仍不等于本机保护已开**：① 当前 desktop 实例仍是 failed 的旧代码，④ 真实 PTC、⑤ 三档真实切换、⑥ 20 entry 真实耗时仍未取得，重启后照旧要验。
 
+- 00:56 同一探针追加真实 **PTC** 会话（见第 12 项）：`DSH_TOOLS_MODE=ptc` 下 `run_code` 里的 `tools.write` 被拒，`[CRASH_LORE_BLOCKED]`/`P018` 回到发起会话并输出 `DONEPTC`，副本 sha256 不变；探针本轮 19/19（会话 A 一次命中，B、C 独立起停）。第 5 节清单 ④ 由此从「未取得」变成「已取得（临时宿主内）」。仍未取得：① 当前 desktop 实例、⑤ 三档真实切换、⑥ 20 entry 真实耗时。
+
 - 待重启后补验（每项都要原始工具结果 + 时间，写进本文件，不通过就写哪一步失败）：① `plugin_manager list_plugins` 里 `include:crash-lore` 为 `fiberPhase: active`、`crash_lore_guard` 工具可见并报「保护中」且与真实 hook 一致；② 真实会话里危险 `write` 被拒且文件 sha256 不变，改正后同调用放行；③ 真实第二会话做同一动作，确认拒绝只回发起会话、该会话继续活着；④ 真实 PTC `run_code` 子调用被拒后原会话收到补充说明；⑤ guard/observe/off 三档切换与状态文本一致；⑥ 20 entry 预检耗时（批量解析后应 <200 ms）。
 - 附带要观察的一条：重启后 `set_plugin` / `set_bundle` 的在线重载是否恢复可用（本轮它是坏的）。若重启后仍报 `cannot create effect on inactive context`，那是宿主侧缺陷，应单独报给宿主，不记在插件账上。
 
@@ -338,7 +361,7 @@ Error: [CRASH_LORE_BLOCKED] 本次操作未执行。
 
 - 功能面（第 1–6、8 项）在真实 handler / 真实 `apply()` 层面通过，0.2.0 的四个已知洞（相对路径、symlink、`set_bundle`、entry-id≠包名）已封；未解析目标 fail-closed。
 - 第 7 项性能历史 FAIL（421–533 ms）已保留；A 的批量语法检查落盘后复测 **1.3 ms**（min），第 7 项转 PASS，自动门禁通过。若后续再改 `guard.mjs` 需重跑 c14，不能用本次数字覆盖历史。
-- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 17/17）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）、真实 PTC `run_code` 子调用回传（④）、三档真实切换（⑤）、20 entry 真实耗时（⑥）。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
+- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 17/17）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）、三档真实切换（⑤）、20 entry 真实耗时（⑥）；真实 PTC 子调用回传（④）已由第 12 项补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
 - 本报告所有 mock/进程内证据与真实宿主证据分开标注；真实第二会话、真实 PTC 本轮未取得，来源列保持「无（未取得）」，不冒充 Lead 补证。
 - **第 3 项对抗用例已闭环**：修复前 20 个 1.5 MB 级 entry、坏语法、150 ms 预算时会 `unchecked:20` 且 ALLOWED（证据 `/tmp/cl-acceptance-adversarial-before.txt`：2 pass / 1 fail、exit 1）；A 改为安装/启用路径 3000 ms + 单次重试 + `uninspected` 硬拒后，同用例 deny P013，5 ms 预算注入 deny `uninspected`（文案不冒充语法错误），20 个大而合法入口 allowed。`adversarial --strict` 现为 6/6、exit 0。写前检查仍是 fail-open，符合「写前不因性能预算误伤」的原口径。
 

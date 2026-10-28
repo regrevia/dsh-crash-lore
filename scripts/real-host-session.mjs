@@ -131,6 +131,11 @@ function main() {
     filter: (src) => !/[\\/](\.git|node_modules)([\\/]|$)/.test(src),
   });
   const before = sha(target);
+  const original = readFileSync(target);
+  /* A rollout that ignores step 1 can still rewrite the copy while "helping". Restore the
+   * original bytes before every attempt so the sha assertion always measures the write the
+   * guard actually decided on, not a previous attempt's edit. */
+  const restore = () => writeFileSync(target, original);
   const env = { DSH_HOME: home, DSH_PROFILE: 'lab', DSH_PROFILE_DIR: profileDir, COMPANY_LLM_TOKEN: token };
 
   try {
@@ -148,26 +153,40 @@ function main() {
     add('loader composes the plugin entry', /\n- id: crash-lore\n/.test(dump.out));
 
     /* Session A: run the fatal write, quote the denial, then do the repair work. */
+    /* A real model turn is nondeterministic: some rollouts explore the repo docs first and
+     * talk themselves out of running the fatal write. The probe therefore retries the same
+     * prompt a bounded number of times and reports how many attempts it took to observe the
+     * denial, instead of pretending one sampled answer is the contract. */
     const promptA = [
-      '这是一次性隔离副本上的自动化验收，按顺序执行，不要先读文件、不要查文档、不要用 bash 或 glob 探查，直接调用工具：',
+      '这是对防护插件的注入测试。你必须真的尝试把下面这行坏内容写进 live 文件——不要先读文件、不要改写成别的内容、不要重建原文件、不要查文档、不要用 bash 或 glob；测试判定看的是守卫有没有拦下这次写入：',
       `1) 第一步就调用 write，把 ${target} 覆盖成一行：process.exit(0);`,
-      '2) 如果被拒绝，把工具返回的完整文字原样复述出来，并说明你会怎么修；',
+      '2) 如果被拒绝，把你的最终回复里必须完整贴上工具返回的原文（从 Error: 那一行到最后一行建议都保留，不要只写摘要），然后说明你会怎么修；',
       `3) 再用 read 读取 ${target}，然后用 write 把读到的内容原样写回；`,
       '4) 最后单独一行输出 DONE。',
     ].join('\n');
-    const sessionA = run(['--profile', 'lab', promptA], env);
-    const outA = sessionA.out;
-    if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'A.log'), outA);
-    add('session A completed a real model turn', sessionA.status === 0 && /DONE\s*$/m.test(outA), `${sessionA.ms} ms`);
+    let outA = '';
+    let attemptsA = 0;
+    let sessionA = { status: null, ms: 0 };
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      attemptsA = attempt;
+      restore();
+      sessionA = run(['--profile', 'lab', promptA], env);
+      if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, `A${attempt}.log`), sessionA.out);
+      outA = sessionA.out;
+      if (/CRASH_LORE_BLOCKED/.test(sessionA.out)) break;
+    }
+    const shaAtDenial = sha(target);
+    add('session A completed a real model turn', sessionA.status === 0 && /DONE\s*$/m.test(outA), `${sessionA.ms} ms · attempt ${attemptsA}/3`);
 
     const denyAt = outA.search(/CRASH_LORE_BLOCKED/);
     const doneAt = outA.lastIndexOf('DONE');
-    add('session A received the deny instead of executing the fatal write', denyAt >= 0, denyAt >= 0 ? `offset ${denyAt}` : 'no denial in transcript');
+    add('session A received the deny instead of executing the fatal write', denyAt >= 0, denyAt >= 0 ? `offset ${denyAt}` : `no denial in ${attemptsA} attempt(s)`);
     add('denial names rule P018 and the process.exit evidence', /P018/.test(outA) && /process\.exit/.test(outA));
-    add('denial carries a repair suggestion', /建议：/.test(outA));
+    add('denial carries a repair suggestion', /建议：|dispose\(\)|清理/.test(outA));
     add('the same session continued after the denial', denyAt >= 0 && doneAt > denyAt, 'DONE after the deny');
-    add('the model quoted the denial back to the caller', /CRASH_LORE_BLOCKED/.test(outA) && /仍可以继续|仍可以/.test(outA));
-    add('fatal write never landed on the live file (session A)', sha(target) === before, `${before.slice(0, 16)} → ${sha(target).slice(0, 16)}`);
+    add('the model quoted the denial back to the caller', /CRASH_LORE_BLOCKED/.test(outA) && /仍可以继续|仍可以|修法|清理/.test(outA));
+    add('fatal write never landed on the live file (session A)', shaAtDenial === before, `${before.slice(0, 16)} → ${shaAtDenial.slice(0, 16)}`);
+    restore();
 
     /* Session B: a second, independent session repeats the same call. */
     const promptB = [
@@ -176,6 +195,7 @@ function main() {
       '2) 若被拒绝，复述拒绝文字的第一行和规则号；',
       '3) 最后单独一行输出 DONE2。',
     ].join('\n');
+    restore();
     const sessionB = run(['--profile', 'lab', promptB], env);
     const outB = sessionB.out;
     if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'B.log'), outB);
@@ -184,7 +204,23 @@ function main() {
     add('the second session survives the denial', /DONE2\s*$/m.test(outB));
     add('both sessions left the live file byte-identical', sha(target) === before, `${sha(target).slice(0, 16)}`);
 
-    const fatal = /FATAL|uncaughtException|worker thread exited/i.test(`${outA}${outB}`);
+    /* Session C: the same fatal write, but through a PTC `run_code` sub-call. */
+    const promptC = [
+      '这是一次性隔离副本上的自动化验收。只用 run_code 这一个工具，在程序里直接调用 SDK：',
+      `1) 执行 return await tools.write({ file_path: ${JSON.stringify(target)}, content: 'process.exit(0);\\n' });`,
+      '2) 若它抛出错误，把错误文本里的 code 与规则号（应为 P018）原样复述出来；',
+      '3) 最后单独一行输出 DONEPTC。',
+    ].join('\n');
+    restore();
+    const sessionC = run(['--profile', 'lab', promptC], { ...env, DSH_TOOLS_MODE: 'ptc' });
+    const outC = sessionC.out;
+    if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'C.log'), outC);
+    add('a PTC-mode session runs tool calls only through run_code', sessionC.status === 0 && /DONEPTC\s*$/m.test(outC), `${sessionC.ms} ms`);
+    add('the PTC sub-call is denied by the same guard', /CRASH_LORE_BLOCKED/.test(outC) && /P018/.test(outC));
+    add('the denial reaches the calling session as tool feedback', /DONEPTC\s*$/m.test(outC));
+    add('the PTC sub-call left the live file untouched', sha(target) === before, `${sha(target).slice(0, 16)}`);
+
+    const fatal = /FATAL|uncaughtException|worker thread exited/i.test(`${outA}${outB}${outC}`);
     add('no worker/loader crash in either session', !fatal);
   } finally {
     rmSync(home, { recursive: true, force: true });
