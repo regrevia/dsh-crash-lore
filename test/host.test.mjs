@@ -275,7 +275,7 @@ test('a hot reload keeps the denial history and never doubles the hooks', async 
     apply(ctx, {});
     assert.equal(ctx.tools.guards.length, 1, 're-apply installs exactly one hook');
     /* 第 1 个是崩溃防线，第 2 个是安装体检的 passive listener */
-    assert.equal((ctx.listeners.get('tools/pre-execute') ?? []).length, 2); 
+    assert.equal((ctx.listeners.get('tools/pre-execute') ?? []).length, 2);
     assert.equal(defenseState().denialCount, 1, 'a reload must not clear the denials');
     ctx.dispose();
   });
