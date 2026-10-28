@@ -17,13 +17,14 @@
 | 1 | 真实 `write` 崩溃形态被拒、sha256 不变、改正后可写 | **PASS** | 5 条 c1-* 全绿；`c1-file-unchanged` 字节一致；`c1-side-effect-absent` 无执行痕迹 | `[自动·进程内]`；真机仅首轮 `[CRASH_LORE_BLOCKED]` 单条（来源：真实宿主） |
 | 2 | 绝对/相对/symlink 同一文件判定一致，含 0.2.0 漏洞 | **PASS** | `c2-relative-path`、`c3-symlink-dir` 0.2.0 会 ALLOW，现均 deny P014 | `[自动·进程内]` |
 | 3 | 坏插件安装被拒；`set_plugin(entry id)`/`set_bundle` 不能绕过；超预算时 fail-closed | **PASS** | `c4`/`c5`/`c6`/`c7` 全 deny；adversarial 6/6：20×1.5 MB 坏入口 deny P013、5 ms 预算注入 deny `uninspected`、20 个大而合法入口 allowed | `[自动·进程内]` |
-| 4 | 其他会话的开发工作不受影响 | **PASS（进程内）**；真机第二会话 **未覆盖 · 待重启宿主后验证** | `c12-normal-write`、`c12-next-call-clean`、`c12-denial-scope`（仅 1 条新记录） | `[自动·进程内]`；真机来源：无（未取得） |
+| 4 | 其他会话的开发工作不受影响 | **PASS（进程内 + 真实会话 A/B）** | `c12-*` 三条；`real-host-session.mjs`：会话 A 被拒后继续完成修复，会话 B 独立起停、同样被拒且存活，两次都未改到 live 文件 | `[自动·进程内]` + `[真机·真实模型回合]`（第 11 项） |
 | 5 | PTC `run_code` 子调用拒绝能到达发起 agent | **PASS（进程内载荷）**；真机 PTC **未覆盖 · 待重启宿主后验证** | `c13-ptc-payload`：`code=CRASH_LORE_BLOCKED`、`rule=P014`、含位置/建议/重新提交 | `[自动·进程内]`；真机来源：无（未取得） |
 | 6 | guard/observe/off 状态与行为一致，off 真不拦 | **PASS** | `c9-*` 开启=拒绝；`c10-*` 仅监测=放行但记录、`hooks.write=sync && pre=async`；`c11-*` 关闭=放行且 0 新记录 | `[自动·进程内]` |
 | 7 | 20 entry 预检计时，>200 ms 判失败 | **历史 FAIL → 修复后 PASS** | 历史 `preflight()` 421.3–533 ms（20×node --check≈21.5 ms/个）；A 批量解析落盘后 **1.3 ms**（首次 31.0 ms 含子进程） | `[自动·进程内]` |
 | 8 | `npm pack` + 临时 profile 冷装，产物/默认路径/无作者数据 | **PASS** | 冷装 28/28；tgz 76899 B；defense/locale/seed 齐全；`p18` 零作者 incident | `[自动·进程内]`（临时 DSH_HOME） |
 | 9 | 0.2.1 被**真实宿主进程**的 loader 加载并激活（不是进程内 mock） | **PASS** | `real-host-activation.mjs` 6/6（单次 1.2–3.0 s）；`--dump-config` 合成树第 385 行含 `dsh-crash-lore`；boot 无 `did not activate`、无 `(dsh-crash-lore)` 报错并走到 `MISSING_CREDENTIAL`（= 整棵树已 mount） | `[真机·真实宿主进程]`（临时 DSH_HOME + 出厂 headless 模板；仓库 link 与 registry 产物各 6/6；交互式 a–e 仍待重启） |
 | 10 | 0.2.1 在**真实宿主进程**里对真实工具调用做出拦截决策（不是进程内 mock） | **PASS** | `real-host-guard.mjs` 17/17（2.1–2.9 s）：fixture 经宿主自己的 `ctx.tools.execute()` 写入，非法 JS 与合法 JS 崩溃形态各被拒一次（`P013`、`P018`），拒绝载荷带位置/原因/建议；同调用方改好后再写**成功**（被拒→修正→通过，一轮走通）；同进程的正常写成功（无过度拦截）；被拒前后 `index.js` sha256 `9428e512…` 一致；boot 无 worker/loader 崩溃 | `[真机·真实宿主进程]`（临时 DSH_HOME + 出厂 headless 模板 + 临时 fixture 包；无模型交互） |
+| 11 | **真实模型回合**里的拦截回传：危险写被拒、拒绝原文回到原会话、该会话继续干活；第二个会话独立起停 | **PASS** | `real-host-session.mjs` 15/15（两次会话 28.2 s / 6.5 s，总 3 次检查间隔 ~50 s）：会话 A 的 `write` 收到 `[CRASH_LORE_BLOCKED]`/`P018`/`建议：`，随后 read→write 原样写回成功、输出 `DONE`；会话 B 同样被拒并输出 `DONE2`；live 副本 `index.js` 前后 sha256 `9428e512…` 一致；无 worker/loader 崩溃 | `[真机·真实模型回合]`（临时 DSH_HOME + 临时 profile + 仓库副本作 live root；真实 company 路由、真实模型 `deepseek-v4.1-flash`） |
 
 汇总 JSON：`/tmp/cl-acceptance-verify.json`（编排器）、`/tmp/cl-acceptance-matrix.json`、`/tmp/cl-acceptance-cold-install.json`、`/tmp/cl-acceptance-extras.json`。
 
@@ -98,7 +99,7 @@ PASS c12-next-call-clean     上一次拒绝不污染下一次调用
 PASS c12-denial-scope        本次只新增 1 条拒绝记录（用 before/after 差值断言）
 ```
 
-真实第二会话本轮**未覆盖**（宿主不重启无法加载 0.2.1，重启会杀掉当前会话），待重启后验证；来源：无（未取得）。本报告不代替真实会话结论。
+真实第二会话由第 11 项补上：另一个独立会话重复同一危险写，被拒后自己正常收尾（`DONE2`），说明拒绝只作用于该次调用、不牵连其他会话。当前 desktop 会话里那份 failed 的实例仍未验，来源列不冒充。
 
 ### 第 5 项 PTC 子调用回传（PASS，进程内载荷）
 
@@ -240,6 +241,57 @@ PASS real host process · 17/17 checks (2135 ms)
 **探针自身的前提（都写在脚本里，可复核）**：① 必须显式给 `DSH_PROFILE_DIR=<临时 profile>`，否则 live surface 判定为空，写 live 插件会被宿主的 read-before-write 策略先挡成 `FS_NOT_OBSERVED` 而不是本插件的判定，探针因此显式注入该变量；② 闭环那步在**一次性临时 profile** 里关掉了与本插件无关的 `fs-observation-policy`（宿主的 read-before-write），否则「修正后写成功」会先被这条独立策略挡住、看不出本插件是否已放行——这条只影响临时 profile，不碰用户 profile；③ 两个拒绝仍由 crash-lore 自己的 guard 产生（guard 在 fs 策略之前跑，P013/P018 的拒绝文案即证据）。
 
 
+### 第 11 项 真实模型回合里的拦截回传（PASS，非 mock）
+
+`node scripts/real-host-session.mjs --json`（2026-10-28T16:42:43Z 采样；脚本内两次会话分别 28.2 s、6.5 s，整跑约 50 s）→ **15/15 PASS**，exit 0；原始 JSON `/tmp/cl-session-report.json`，两份会话原始记录 `/tmp/cl-session-trace/A.log`、`/tmp/cl-session-trace/B.log`。
+
+做法：临时 `DSH_HOME` + 出厂 headless 模板建一个 `lab` profile；把本仓库**复制**一份到临时目录当 live 插件根（用 `link:` 装进 profile，仓库自身不动）；从调用方 profile 抄 `agent-default-model` / `llm-pi-ai` 两个条目接上真实 provider 路由；凭证只在进程内从 `~/.dsh/.credentials.yaml` 的 `refs` 读出后传给子进程（不打印、不落盘、不进仓库）。然后起两个真实会话：
+
+- 会话 A：让模型**第一步就** `write`，把 live 副本的 `index.js` 覆盖成 `process.exit(0);`；被拒后复述拒绝原文，再 `read` 原文件并原样写回，最后输出 `DONE`。
+- 会话 B：另一个独立会话重复同一危险写；被拒后输出 `DONE2`。
+
+原始输出（节选）：
+
+```
+PASS  temp profile created outside the user profile — lab
+PASS  plugin copy installed into the throwaway profile — Done in 265ms using pnpm v11.28.5
+PASS  loader composes the plugin entry
+PASS  session A completed a real model turn — 28199 ms
+PASS  session A received the deny instead of executing the fatal write — offset 228
+PASS  denial names rule P018 and the process.exit evidence
+PASS  denial carries a repair suggestion
+PASS  the same session continued after the denial — DONE after the deny
+PASS  the model quoted the denial back to the caller
+PASS  fatal write never landed on the live file (session A) — 9428e512862b92cd → 9428e512862b92cd
+PASS  a second session starts and finishes on its own — 6531 ms
+PASS  the second session is denied too (denial is per call)
+PASS  the second session survives the denial
+PASS  both sessions left the live file byte-identical — 9428e512862b92cd
+PASS  no worker/loader crash in either session
+PASS real host interactive sessions · 15/15 checks (50651 ms)
+```
+
+会话 A 收到的拒绝原文（`A.log` 节选；路径是临时目录，已缩写）：
+
+```
+Error: [CRASH_LORE_BLOCKED] 本次操作未执行。
+
+插件：dsh-crash-lore
+位置：/private/.../live-plugin/index.js:1
+规则：P018 插件接管了进程退出
+原因：调用了 process.exit：它直接终止宿主进程，当前所有会话一起掉线。
+证据：process.exit(0);
+风险：这一步会在 running profile 里生效，宿主激活/热重载时崩溃，当前所有会话一起掉线。
+建议：删掉退出调用，把清理放进 dispose() 或 apply() 返回的清理函数
+改好后重新提交这次写入；你仍可以继续读代码、改开发副本、跑测试。
+```
+
+同一会话随后 `read` 了 637 行并把内容原样写回（工具返回 `Updated file`），再输出 `DONE`；会话 B 也拿到 `CRASH_LORE_BLOCKED`/`P018` 并输出 `DONE2`。
+
+**这项证明什么**：0.2.1 在**真实模型回合**里工作——模型真的发出危险 `write`，拿到的是本插件的拒绝载荷；拒绝**回到发起会话**，会话没死、继续完成后续 read/write 并收尾；第二个会话独立起停、同样被拒、自己正常结束，即拒绝是「每次调用、每个会话各自的事」，不杀会话也不杀宿主；live 副本字节不变；宿主退出码 0、无 loader/worker 崩溃。
+**这项不证明什么**：① 被验的是临时 profile + 仓库副本，**不是当前 desktop 会话里那份 `failed` 的实例**，所以「本机防护已开启」仍不成立；② 未覆盖真实 PTC `run_code` 子调用回传（第 5 项）、三档真实切换（第 6 项）、重启后 `set_plugin` 在线重载；③ 会话里的拒绝文字是模型复述，契约部分以第 10 项的原始载荷为准，不把模型措辞当归宿 API。
+**探针自身的前提**：① 必须显式给 `DSH_PROFILE_DIR=<临时 profile>`，否则插件 live surface 判定为空，危险写会先被宿主的 read-before-write 策略挡掉（与第 10 项同一前提）；② 需要 provider 路由与凭证，缺任一项脚本 exit 2 skip，不把「跑不起来」写成 PASS；③ 启动日志里另有一条与本插件无关的 `intellif` entry 导入失败（缺 `@deepseek-ai/dsh-llm`），来自继承的默认配置，不是 crash-lore 的激活错误——断言只认 `crash-lore` entry 与拒绝载荷。
+
 ## 3. 附加项
 
 | 附加项 | 判定 | 证据 |
@@ -263,6 +315,7 @@ PASS real host process · 17/17 checks (2135 ms)
 | `node scripts/real-host-activation.mjs` | 6 pass / 0 fail 两次：仓库 link（00:15，1.2–1.4 s）、`dsh-crash-lore@0.2.1` registry 产物（00:20，2.5–3.0 s），真实宿主进程加载，非 mock |
 
 | `node scripts/real-host-guard.mjs` | 17 pass / 0 fail（2026-10-28T16:26:50Z，2.1–2.9 s），真实宿主进程内对真实 `write` 调用做拦截决策，并走通被拒→修正→通过，非 mock |
+| `node scripts/real-host-session.mjs` | 15 pass / 0 fail（2026-10-28T16:42:43Z 采样，整跑 50.7 s），真实宿主 + 真实模型回合：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活，非 mock |
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
 ## 5. 真机状态（待重启后验证，禁止写成已通过）
@@ -276,6 +329,8 @@ PASS real host process · 17/17 checks (2135 ms)
 - 重载尝试没有留下持久副作用：`cordis.patch.yml` 在 00:00 后未再变化（当前 sha256 `95da2c6c5d737d7172605ad9a004165d9e80410ff3eb15bf912ed9c81b106b67`，无 `crash-lore` 行、无 `disabled` override），profile 依赖仍是 `link:/Users/apple/Desktop/DSH/dsh-crash-lore`，entry `enabled: true`。故**重启后会按正常路径加载 0.2.1**，无需任何手工修复。注：本文件当前 sha 与 Lead 备份 `/tmp/patch.bak-lead` 已不同（差异只是 `- id: adb / disabled: false` 两行，`adb` 在本宿主同样 failed），本报告早前写的 `f7c3dcf3…` 与「逐字节一致」据此作废，**以 95da2c6c… 为准**。
 - 00:15 补了一条**真实宿主进程**证据（见第 9 项）：0.2.1 在出厂启动器 + 临时 `DSH_HOME` + 出厂 headless 模板的真实 loader 下 6/6 激活，无 `did not activate`、合成树含 entry。这补上了「能不能被真实 loader 装上」一半，但**没有模型交互**，第 4、5 项的真实第二会话与真实 PTC 仍属未取得，判定不变。
 - 00:23 又补一条真实宿主进程证据（见第 10 项）：真实 `tools.guard` 对真实 `write` 调用返回 `[CRASH_LORE_BLOCKED]`/`P013`，对合法 JS 但 `process.exit` 的形态返回 `P018`，同调用方改好后重写同一文件成功，同进程的正常写也成功，被拒文件 sha256 不变（`real-host-guard.mjs` 17/17）。这坐实了「拦截决策 + 拒绝载荷 + 修正后放行 + 不误伤 + 不杀宿主」半边；仍**没有模型交互**，同会话存活 / PTC 回传 / 三档切换 / 重启后 `set_plugin` 仍待重启。
+- 00:43 补第三条**真实宿主进程**证据，而且是**真实模型回合**（见第 11 项）：临时 `DSH_HOME` + 临时 `lab` profile + 仓库副本作 live root，模型被要求直接把 `process.exit(0);` 写进 live `index.js`，收到 `[CRASH_LORE_BLOCKED]`/`P018`/`建议：`，随后在同一会话里把原文 read→write 写回并 `DONE`；另一个独立会话重复同一动作，同样被拒并自己收尾 `DONE2`；副本 sha256 前后一致、宿主 exit 0、无崩溃（`real-host-session.mjs` 15/15）。这把第 5 节清单的 ②（拒绝文案 + sha 不变 + 改正后放行）与 ③（第二会话存活、拒绝只回发起会话）从「未取得」变成「已取得（临时宿主内）」；**仍不等于本机保护已开**：① 当前 desktop 实例仍是 failed 的旧代码，④ 真实 PTC、⑤ 三档真实切换、⑥ 20 entry 真实耗时仍未取得，重启后照旧要验。
+
 - 待重启后补验（每项都要原始工具结果 + 时间，写进本文件，不通过就写哪一步失败）：① `plugin_manager list_plugins` 里 `include:crash-lore` 为 `fiberPhase: active`、`crash_lore_guard` 工具可见并报「保护中」且与真实 hook 一致；② 真实会话里危险 `write` 被拒且文件 sha256 不变，改正后同调用放行；③ 真实第二会话做同一动作，确认拒绝只回发起会话、该会话继续活着；④ 真实 PTC `run_code` 子调用被拒后原会话收到补充说明；⑤ guard/observe/off 三档切换与状态文本一致；⑥ 20 entry 预检耗时（批量解析后应 <200 ms）。
 - 附带要观察的一条：重启后 `set_plugin` / `set_bundle` 的在线重载是否恢复可用（本轮它是坏的）。若重启后仍报 `cannot create effect on inactive context`，那是宿主侧缺陷，应单独报给宿主，不记在插件账上。
 
@@ -283,7 +338,7 @@ PASS real host process · 17/17 checks (2135 ms)
 
 - 功能面（第 1–6、8 项）在真实 handler / 真实 `apply()` 层面通过，0.2.0 的四个已知洞（相对路径、symlink、`set_bundle`、entry-id≠包名）已封；未解析目标 fail-closed。
 - 第 7 项性能历史 FAIL（421–533 ms）已保留；A 的批量语法检查落盘后复测 **1.3 ms**（min），第 7 项转 PASS，自动门禁通过。若后续再改 `guard.mjs` 需重跑 c14，不能用本次数字覆盖历史。
-- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）与 guard 决策半边（第 10 项 17/17：P013+P018 拒绝、拒绝载荷、修正后放行、正常写不误伤、被拒文件 sha 不变、宿主不崩）已有真实宿主进程证据**；交互式半边（拒绝文案、第二会话存活、PTC 回传、三档切换）仍需 desktop 宿主重启后验证。当前运行中的进程仍是旧代码，不能把进程内 PASS 当成真机 PASS。
+- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 17/17）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）、真实 PTC `run_code` 子调用回传（④）、三档真实切换（⑤）、20 entry 真实耗时（⑥）。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
 - 本报告所有 mock/进程内证据与真实宿主证据分开标注；真实第二会话、真实 PTC 本轮未取得，来源列保持「无（未取得）」，不冒充 Lead 补证。
 - **第 3 项对抗用例已闭环**：修复前 20 个 1.5 MB 级 entry、坏语法、150 ms 预算时会 `unchecked:20` 且 ALLOWED（证据 `/tmp/cl-acceptance-adversarial-before.txt`：2 pass / 1 fail、exit 1）；A 改为安装/启用路径 3000 ms + 单次重试 + `uninspected` 硬拒后，同用例 deny P013，5 ms 预算注入 deny `uninspected`（文案不冒充语法错误），20 个大而合法入口 allowed。`adversarial --strict` 现为 6/6、exit 0。写前检查仍是 fail-open，符合「写前不因性能预算误伤」的原口径。
 
