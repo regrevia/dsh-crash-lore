@@ -65,6 +65,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node cli.mjs check .",
-    "verify": "npm test && npm run check"
+    "verify": "npm test && npm run check",
+    "test:host-resolve": "node scripts/real-host-resolve.mjs"
   }
 }

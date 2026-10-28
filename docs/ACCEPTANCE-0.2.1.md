@@ -2,7 +2,7 @@
 
 - 验收对象：`/Users/apple/Desktop/DSH/dsh-crash-lore`，version `0.2.1`，以 `link:` 装入真实宿主 profile `~/.dsh/profiles/desktop`。
 - 验收时间：2026-10-28T23:49:38+08:00 ～ 2026-10-29T00:03+08:00（UTC 记录见各 JSON 的 `at`）。中间 A 先落盘 guard.mjs 批量语法检查（23:54），再按 Lead 决定落盘安装路径 fail-closed（00:00）；**产品代码 2026-10-29 00:01 起正式冻结**，本报告数字均为冻结后快照。历史数据与新数据分两段记录。
-- 最终判定：**自动门禁通过 / 真机加载激活 PASS（第 9 项）/ 真机进程内拦截 PASS（第 10 项）/ 交互式真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；第 10 项补上「真实宿主进程里的 guard 决策 + 拒绝载荷 + 修正后放行 + 文件 sha 不变」；仍缺模型交互半边（同会话存活、PTC 回传、三档切换、重启后 `set_plugin`），**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
+- 最终判定：**自动门禁通过 / 真机加载激活 PASS（第 9 项）/ 真机进程内拦截 PASS（第 10 项）/ 真机目标解析 PASS（第 15 项）/ 交互式真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；第 10 项补上「真实宿主进程里的 guard 决策 + 拒绝载荷 + 修正后放行 + 文件 sha 不变」，第 15 项补上「绝对路径 / 会话相对路径 / 软链接三种写法在真实宿主里都落到同一 live surface」；仍缺模型交互半边（同会话存活、PTC 回传、三档切换、重启后 `set_plugin`），**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
 - 环境：macOS；真实宿主 pid 90362（启动于 2026-10-28 17:28:53）；插件源码最后修改 2026-10-28 23:40 ～ 2026-10-29 00:00，**晚于宿主启动**，故真实宿主进程内加载的不是 0.2.1 最终代码（见「真机状态」）。截至 00:10 复核，该 entry 已 `fiberPhase: failed`、`crash_lore_*` 工具不可见，**本机当前防护是关的**；本宿主的动态重载通道同时失效，只能靠重启加载 0.2.1。
 - 证据来源标记：
   - `[自动·进程内]`：`test/integration/*` 用插件真实 `apply()`、真实注册的 guard/pre-execute handler，在 mock profile 上跑；不是真实宿主。
@@ -342,6 +342,26 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 **证明什么**：真实宿主进程里、真实安装产物路径下，20 entry 预检 1.3 ms，远低于 200 ms 预算；0 误报；首次 76.8 ms 是子进程冷启动。
 **不证明什么**：不覆盖 20×1.5 MB 的极端体积（那组在 `adversarial` 进程内 6/0）。
 
+### 第 15 项 真实宿主里的目标解析（绝对路径 / 会话相对路径 / 软链接，PASS，非 mock）
+
+`node scripts/real-host-resolve.mjs --json`（2026-10-29T01:3xZ 采样）→ **16/16 PASS**，1.7 s，exit 0；原始 JSON `/tmp/cl-resolve2.json`。做法：临时 `DSH_HOME` + `lab` profile 装本包与一个探针 fixture，宿主**工作目录设为仓库父目录**（`/Users/apple/Desktop/DSH`），fixture 经宿主自己的 `ctx.tools.execute()` 写受保护文件三次、写无害文件两次：
+
+```
+PASS  session cwd is the repo parent — /Users/apple/Desktop/DSH
+PASS  absolute path to the protected file is denied
+PASS  session-relative path is denied too   {"isError":true,...[CRASH_LORE_BLOCKED]...规则 P013}
+PASS  symlinked path is denied too          {"isError":true,...[CRASH_LORE_BLOCKED]...规则 P013}
+PASS  denials come from this plugin
+PASS  benign scratch write executed (no over-blocking)
+PASS  benign write through a symlink still lands
+PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512862b92cd
+```
+
+三份拒绝都带位置（解析后的真实 live 路径）、原因与建议，`code=CRASH_LORE_BLOCKED`、规则 `P013`；无害写到 scratch 与其软链接都真的落盘。
+
+**证明什么**：目标解析的三个缺口（绝对路径、会话相对路径、软链接）在**真实宿主进程**里都被识别到同一个 live surface，不是只在进程内假 ctx 上成立；软链接 / 相对路径没有绕过、也没有把无害文件误判。
+**不证明什么**：① 只覆盖 `write`，`set_plugin` entry id、`set_bundle`、保护范围刷新仍只有进程内 `c-*` 证据；② 不是当前 desktop 实例（临时 profile）；③ 无关文件走软链接放行，只说明「解析后不在 live surface 就放过」，不覆盖外部编辑器绕过（见已知缺口）。
+
 ## 3. 附加项
 
 | 附加项 | 判定 | 证据 |
@@ -365,6 +385,7 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 | `node scripts/real-host-activation.mjs` | 6 pass / 0 fail 两次：仓库 link（00:15，1.2–1.4 s）、`dsh-crash-lore@0.2.1` registry 产物（00:20，2.5–3.0 s），真实宿主进程加载，非 mock |
 
 | `node scripts/real-host-guard.mjs` | 19 pass / 0 fail（2026-10-28T16:26:50Z，2.1–2.9 s），真实宿主进程内对真实 `write` 调用做拦截决策，并走通被拒→修正→通过，非 mock；同一 fixture 在宿主进程里跑 20 entry 预检 3 次（1.34/1.51/76.82 ms，0 误报） |
+| `node scripts/real-host-resolve.mjs` | 16 pass / 0 fail（1.7 s），真实宿主进程内同一受保护文件的绝对路径 / 会话相对路径 / 软链接三种写法各被拒一次（`P013`），无害写与无害软链接写正常落盘，被拒文件 sha256 不变，非 mock |
 | `node scripts/real-host-session.mjs` | 26 pass / 0 fail（2026-10-28T16:54:30Z 采样）：真实宿主 + 真实模型回合 + 真实 PTC：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活、`run_code` 子调用同样被拒并回传；追加三档模式（observe/off 落盘 + 仅监测日志）与模式配置断言，非 mock |
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
@@ -377,7 +398,7 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 - **2026-10-29 00:10 复核，该 entry 现已 `fiberPhase: failed`、`crash_lore_*` 工具在本会话不可见，即当前宿主里防护是关的**（不是「装好了在跑」）。插件生命周期状态以 `plugin_manager list_plugins` 的 `include:crash-lore`（`enabled: true / fiberPhase: failed`）为准，不以旧文字记录为准。
 - 00:12 尝试用合法通道 `plugin_manager set_plugin` / `set_bundle` 在线重载 0.2.1（先 disable 再 enable，各一次 + bundle 级各一次）：全部返回 `dsh: warning: 1 entry did not activate / crash-lore (dsh-crash-lore): Error: cannot create effect on inactive context`。同一报错在**与本插件无关**的操作里也作为 `adb (dsh-mobile-use)` 警告反复出现，说明这不是 crash-lore 的加载错误，而是**该宿主当前的动态 apply 通道整体不可用**（重新 apply 任何 entry 都会落在 inactive context 上）。结论：本会话内无法把 0.2.1 装上机，只能重启宿主。
 - 重载尝试没有留下持久副作用：`cordis.patch.yml` 在 00:00 后未再变化（当前 sha256 `95da2c6c5d737d7172605ad9a004165d9e80410ff3eb15bf912ed9c81b106b67`，无 `crash-lore` 行、无 `disabled` override），profile 依赖仍是 `link:/Users/apple/Desktop/DSH/dsh-crash-lore`，entry `enabled: true`。故**重启后会按正常路径加载 0.2.1**，无需任何手工修复。注：本文件当前 sha 与 Lead 备份 `/tmp/patch.bak-lead` 已不同（差异只是 `- id: adb / disabled: false` 两行，`adb` 在本宿主同样 failed），本报告早前写的 `f7c3dcf3…` 与「逐字节一致」据此作废，**以 95da2c6c… 为准**。
-- **2026-10-29 01:2x 重启前基线（本会话在线只读复核，不写入）**：`plugin_manager list_plugins` 共 224 项，`include:crash-lore`（`dsh-crash-lore`, `patchId: crash-lore`）`enabled: true`、**`fiberPhase: failed`**；`cordis Inspect · Tool.listTools` 在本会话可见工具里**没有** `crash_lore_*`（0 处命中，全量目录在 `/tmp` 溢写里检索）；`Config.listConfigs` 里该 entry 为 `include:crash-lore`。`adb (dsh-mobile-use)` 同为 `failed`，与 00:12 判断一致：宿主动态 apply 通道整体坏。宿主 `pid 90362` 启动 17:28:53、截至 01:12 已存活 7h43m，而 `dsh-crash-lore` 是 18:54 才进入 desktop profile 的 bundle 列表，**本进程从未加载 0.2.1**。重启后复核口径：`fiberPhase: active` + `crash_lore_guard` 可见 + 工具输出「模式 开启 / 实际状态 正常」+ 另一会话真实危险写被拒且会话继续，四者齐了才算 ①。
+
 
 - 00:15 补了一条**真实宿主进程**证据（见第 9 项）：0.2.1 在出厂启动器 + 临时 `DSH_HOME` + 出厂 headless 模板的真实 loader 下 6/6 激活，无 `did not activate`、合成树含 entry。这补上了「能不能被真实 loader 装上」一半，但**没有模型交互**，第 4、5 项的真实第二会话与真实 PTC 仍属未取得，判定不变。
 - 00:23 又补一条真实宿主进程证据（见第 10 项）：真实 `tools.guard` 对真实 `write` 调用返回 `[CRASH_LORE_BLOCKED]`/`P013`，对合法 JS 但 `process.exit` 的形态返回 `P018`，同调用方改好后重写同一文件成功，同进程的正常写也成功，被拒文件 sha256 不变（`real-host-guard.mjs` 17/17）。这坐实了「拦截决策 + 拒绝载荷 + 修正后放行 + 不误伤 + 不杀宿主」半边；仍**没有模型交互**，同会话存活 / PTC 回传 / 三档切换 / 重启后 `set_plugin` 仍待重启。
@@ -390,14 +411,18 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 - 待重启后补验（每项都要原始工具结果 + 时间，写进本文件，不通过就写哪一步失败）：① `plugin_manager list_plugins` 里 `include:crash-lore` 为 `fiberPhase: active`、`crash_lore_guard` 工具可见并报「保护中」且与真实 hook 一致；② 真实会话里危险 `write` 被拒且文件 sha256 不变，改正后同调用放行；③ 真实第二会话做同一动作，确认拒绝只回发起会话、该会话继续活着；④ 真实 PTC `run_code` 子调用被拒后原会话收到补充说明；⑤ guard/observe/off 三档切换与状态文本一致；⑥ 20 entry 预检耗时（批量解析后应 <200 ms）。
 - 附带要观察的一条：重启后 `set_plugin` / `set_bundle` 的在线重载是否恢复可用（本轮它是坏的）。若重启后仍报 `cannot create effect on inactive context`，那是宿主侧缺陷，应单独报给宿主，不记在插件账上。
 
+- **2026-10-29 01:2x 重启前基线（本会话在线只读复核，不写入）**：`plugin_manager list_plugins` 共 224 项，`include:crash-lore`（`dsh-crash-lore`, `patchId: crash-lore`）`enabled: true`、**`fiberPhase: failed`**；`cordis Inspect · Tool.listTools` 在本会话可见工具里**没有** `crash_lore_*`（0 处命中，全量目录在 `/tmp` 溢写里检索）；`Config.listConfigs` 里该 entry 为 `include:crash-lore`。`adb (dsh-mobile-use)` 同为 `failed`，与 00:12 判断一致：宿主动态 apply 通道整体坏。宿主 `pid 90362` 启动 17:28:53、截至 01:12 已存活 7h43m，而 `dsh-crash-lore` 是 18:54 才进入 desktop profile 的 bundle 列表，**本进程从未加载 0.2.1**。重启后复核口径：`fiberPhase: active` + `crash_lore_guard` 可见 + 工具输出「模式 开启 / 实际状态 正常」+ 另一会话真实危险写被拒且会话继续，四者齐了才算 ①。
+- 01:3x 补第四条**真实宿主进程**证据（见第 15 项）：同一受保护文件的绝对路径、**会话相对路径**（宿主 cwd=仓库父目录）、**软链接**三种写法在真实 `ctx.tools.execute()` 下各被拒一次（`P013`，载荷带位置/原因/建议），无害写与无害软链接写正常落盘，被拒文件 sha256 `9428e512…` 不变（`real-host-resolve.mjs` 16/16，1.7 s）。这把「目标解析缺口只在进程内验过」补成真实宿主证据；`set_plugin` entry id / `set_bundle` / 保护范围刷新仍是进程内证据。
+
+
 ## 6. 结论与残留风险
 
 - 功能面（第 1–6、8 项）在真实 handler / 真实 `apply()` 层面通过，0.2.0 的四个已知洞（相对路径、symlink、`set_bundle`、entry-id≠包名）已封；未解析目标 fail-closed。
 - 第 7 项性能历史 FAIL（421–533 ms）已保留；A 的批量语法检查落盘后复测 **1.3 ms**（min），第 7 项转 PASS，自动门禁通过。若后续再改 `guard.mjs` 需重跑 c14，不能用本次数字覆盖历史。
-- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 17/17）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）；三档真实切换（⑤）、20 entry 真实耗时（⑥）、真实 PTC 回传（④）已由第 13/14/12 项在临时真实宿主内补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
+- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 19/19）与目标解析（第 15 项 16/16）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）；三档真实切换（⑤）、20 entry 真实耗时（⑥）、真实 PTC 回传（④）已由第 13/14/12 项在临时真实宿主内补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
 - 本报告所有 mock/进程内证据与真实宿主证据分开标注；真实第二会话、真实 PTC 本轮未取得，来源列保持「无（未取得）」，不冒充 Lead 补证。
 - **第 3 项对抗用例已闭环**：修复前 20 个 1.5 MB 级 entry、坏语法、150 ms 预算时会 `unchecked:20` 且 ALLOWED（证据 `/tmp/cl-acceptance-adversarial-before.txt`：2 pass / 1 fail、exit 1）；A 改为安装/启用路径 3000 ms + 单次重试 + `uninspected` 硬拒后，同用例 deny P013，5 ms 预算注入 deny `uninspected`（文案不冒充语法错误），20 个大而合法入口 allowed。`adversarial --strict` 现为 6/6、exit 0。写前检查仍是 fail-open，符合「写前不因性能预算误伤」的原口径。
 
 ## 7. 文档自查
 
-`node ~/.agents/skills/zh-ui-type-lint/scripts/zh-lint.mjs docs` → **0 error / 10 warning**；全部 `zh-dash` 都是 `node --check`、`--strict`、`--json`、`--test`、`--profile` 这类命令 token 的误判（第 9 项新增 4 条、第 10 项新增 1 条同因），非中文标点问题，按 Lead 口径不改命令写法、不加 `.zh-lint.json`（该脚本的 `ignoreRules` 在当前版本会因 `__ignored__` 查表崩溃）。
+`node ~/.agents/skills/zh-ui-type-lint/scripts/zh-lint.mjs docs` → **0 error / 12 warning**；全部 `zh-dash` 都是 `node --check`、`--strict`、`--json`、`--test`、`--profile` 这类命令 token 的误判（第 9 项新增 4 条、第 10 项新增 1 条同因），非中文标点问题，按 Lead 口径不改命令写法、不加 `.zh-lint.json`（该脚本的 `ignoreRules` 在当前版本会因 `__ignored__` 查表崩溃）。

@@ -1,0 +1,4 @@
+- insert:
+    - id: crash-lore-resolve-probe
+      name: dsh-crash-lore-resolve-probe
+      config: {}
