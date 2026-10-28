@@ -19,6 +19,7 @@
 | 查规则 | 工具 `crash_lore_rules` |
 | 沉淀新规则 | 工具 `crash_lore_record` |
 | 装前预检 | 工具 `crash_lore_check`（包结构 / patch / 工具注册契约 / ESM 语法 + 本机规则） |
+| 运行中拦截危险改动 | 见「崩溃防护」一节；状态与拦截记录用工具 `crash_lore_guard` |
 | 导出清单 | 工具 `crash_lore_export`（默认只在对话里给 markdown；`target:'memory'` 才写长期记忆 global 层） |
 | 起不来时自愈 | 工具 `crash_lore_heal` / CLI `doctor` |
 | 宿主起不来时也能用 | `node cli.mjs ...`（不依赖 DSH 进程） |
@@ -50,6 +51,51 @@ node cli.mjs restore <包名>          # 撤销停用
 
 日志来源：`~/Library/Logs/DeepSeek Harness/crash-*-host.log`、`crash-*-web-boot.log`、`$DSH_HOME/logs/startup-*.log`。
 所有入库文本先脱敏（`sk-…`、`Bearer …`、`apiKey|token|secret|password=`）。
+
+## 崩溃防护（运行中拦截）
+
+预检是装之前问一次，防护是在副作用发生之前每步都问：**这次调用会不会让正在跑的宿主起不来。**
+
+两层接在宿主自己的执行链上：
+
+| 层 | 宿主机制 | 管什么 |
+| --- | --- | --- |
+| 写前守卫 | `ctx.tools.guard()`（同步，不可被放宽） | `write` / `edit` 把**写入后的完整文本**交给规则检查；`bash` 只拦对 live 插件目录的整体删除/移动 |
+| 安装前预检 | `tools/pre-execute`（异步 waterfall，`next()` 放行） | `plugin_manager` 的 `install_bundle` / `set_plugin(enabled)`：先解析候选目录，跑完整 preflight，再决定是否执行 |
+
+live 面 = profile 目录本身 + profile 里所有插件源码（含 `link:` 的开发树，因为宿主就是通过软链加载它的）。
+
+判据是「已经证明会让本机崩溃的形态」，不是风格问题：
+
+- 模块顶层 `throw` / 裸 `await`（P014/P015）
+- ESM 里 `require`（P016）、`__dirname`/`__filename`（P017）
+- 插件 `process.exit`（P018）、接管 `SIGINT`/`SIGTERM`（P019）
+- patch 重复 id（P009）、patch 引用的包没声明（P010）、包结构缺失（P001/P002/P005/P007/P008）
+- 装前还有 `node --check` 的语法闸（P013）、`tools.register` 没闭合（P021）
+- 配置里写明文凭据
+
+放行：读文件、看日志、搜索、改不相关项目、改开发副本、跑测试、以及 live 插件里**正常**的改动（加函数、改文案、调参数）。宁可漏拦，也不拦正常开发——被拦的会话必须能继续改自己的代码。
+
+拒绝时返回给**发起调用的那个会话**（不另开修复会话、不广播、不停用开发中的插件）：
+
+```
+[CRASH_LORE_BLOCKED] 本次操作未执行。
+
+插件：dsh-inner-browser-use
+位置：/…/dsh-inner-browser-use/index.js:312
+规则：P018 插件调用了 process.exit
+原因：插件进程里调 process.exit 会直接杀掉宿主，所有会话一起掉线
+证据：process.exit(1);
+风险：这一步会在 running profile 里生效，宿主激活/热重载时崩溃，当前所有会话一起掉线。
+建议：改成抛给 ctx 报错或返回失败结果，让加载器决定是否停用
+改好后重新提交这次写入；你仍可以继续读代码、改开发副本、跑测试。
+```
+
+工具结果就是一次普通的报错，会话照常继续 —— 修完再提交同一个调用就通过。
+
+开关：`cordis.patch.yml` 里 `config.guard: false` 整体关闭，`config.monitorOnly: true` 只记录不拦（用于先观察误报）。状态别听它自己说：`crash_lore_guard` 会照实报 `保护中 / 仅监测 / 部分覆盖 / 检查异常 / 已关闭`，并各自说明哪一层没接上。
+
+**覆盖边界**（照实写在状态里，不假装全覆盖）：bash/脚本里 `cat > file`、`run_code` 里自己 `fs.writeFile`、外部编辑器保存、宿主自身升级，都绕过工具管线，这层看不到。
 
 ## 安全边界
 

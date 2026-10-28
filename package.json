@@ -1,6 +1,6 @@
 {
   "name": "dsh-crash-lore",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "把 DSH 真实崩溃日志沉淀成精简约束，装插件前静态预检拦崩，起不来时受控自愈",
   "type": "module",
   "exports": {
@@ -9,7 +9,8 @@
     "./guard": "./guard.mjs",
     "./cli": "./cli.mjs",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./defense": "./defense.mjs"
   },
   "bin": {
     "crash-lore": "./cli.mjs"
@@ -18,6 +19,7 @@
     "index.js",
     "core.mjs",
     "guard.mjs",
+    "defense.mjs",
     "cli.mjs",
     "memory.mjs",
     "doctor.mjs",

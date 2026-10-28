@@ -12,6 +12,7 @@ import {
   redact,
   fetchArtifacts,
   scan,
+  importCorpus,
   readIncidents,
   readRules,
   upsertRule,
@@ -266,4 +267,16 @@ test('scan migrates legacy aggregate rows：count 保留，补出每次发生的
   assert.equal(migrated.count, 5, '老条目的累计次数不能丢');
   assert.equal(migrated.occurrenceTimes.length, 5);
   assert.equal(migrated.lastTs, '2025-10-05T00:00:00.000Z');
+});
+
+test('importCorpus dedupes by fingerprint across repeated runs', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-import-'));
+  const corpus = path.join(home, 'corpus.jsonl');
+  fs.writeFileSync(corpus, [
+    JSON.stringify({ fingerprint: 'fp-one', ts: '2026-01-01T00:00:00.000Z', count: 1, signature: 'x' }),
+    JSON.stringify({ fingerprint: 'fp-two', ts: '2026-01-02T00:00:00.000Z', count: 1, signature: 'y' }),
+  ].join('\n') + '\n');
+  assert.equal(importCorpus(home, corpus).imported, 2);
+  assert.equal(importCorpus(home, corpus).imported, 0);
+  assert.equal(readIncidents(home).length, 2);
 });

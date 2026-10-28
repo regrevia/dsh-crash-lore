@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const VERSION = '0.1.2';
+export const VERSION = '0.2.0';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 export function storeDir(home = DEFAULT_HOME) {
@@ -580,7 +580,7 @@ export function importCorpus(home = DEFAULT_HOME, corpusFile) {
   for (const incident of list) {
     if (!incident?.fingerprint || known.has(incident.fingerprint)) continue;
     appendIncident({ ...incident, reportedToMemory: false }, home);
-    known.add(incident.fingerprint);
+    known.set(incident.fingerprint, incident);
     imported += 1;
   }
   return { imported, file };

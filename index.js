@@ -20,6 +20,7 @@ import {
   importCorpus,
   PROMPT_HEADER,
 } from './core.mjs';
+import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
 
 export const name = 'dsh-crash-lore';
 /* Harness ≥ the 2026-09 tool contract: every tool must declare an output shape and a renderer.
@@ -295,6 +296,95 @@ export function apply(ctx, config = {}) {
       return { text: lines.length ? lines.join('\n') : '没有找到可停用的元凶。', result };
     },
   })), 'crash-lore: crash_lore_heal');
+
+  /* ---- live defense ----------------------------------------------------------------
+   * Two host mechanisms carry the refusal: a sync `tools.guard()` for text a write/edit
+   * would put into a file the running host loads, and the async `tools/pre-execute`
+   * waterfall for installs/enables, where the whole candidate can be preflighted.
+   * Both fail open: a defense plugin must not become the crash. */
+  const defense = {
+    enabled: config.guard !== false,
+    monitorOnly: config.monitorOnly === true,
+    hooks: { write: null, preExecute: null },
+    denials: [],
+    lastError: null,
+  };
+  const profileDir = process.env.DSH_PROFILE_DIR || path.join(home, 'profiles', 'desktop');
+  const surfaces = liveSurfaces(profileDir);
+  const targetLabel = (surface, file) => (surface?.name && surface.name !== 'profile' ? `${surface.name} · ${file}` : String(file ?? 'profile'));
+  const record = (finding, surface, file, reason) => {
+    defense.denials.push({
+      at: new Date().toISOString(),
+      rule: finding?.ruleId ?? '?',
+      title: finding?.title ?? '',
+      target: targetLabel(surface, file),
+      reason,
+    });
+    if (defense.denials.length > 20) defense.denials.shift();
+    log(`崩溃防护拦截 ${finding?.ruleId ?? '?'} @ ${targetLabel(surface, file)}`);
+  };
+
+  if (defense.enabled) {
+    if (typeof tools.guard === 'function' && !defense.monitorOnly) {
+      ctx.effect(() => tools.guard((exec) => {
+        try {
+          return guardWrite(exec, { surfaces, onDeny: record }) ?? guardShell(exec, { surfaces, onDeny: record });
+        } catch (error) {
+          defense.lastError = String(error?.message ?? error);
+          return undefined;
+        }
+      }), 'crash-lore: write guard');
+      defense.hooks.write = 'sync';
+    }
+    if (typeof ctx.on === 'function') {
+      ctx.effect(() => ctx.on('tools/pre-execute', async (exec, next) => {
+        try {
+          const decision = await preExecute(exec, { surfaces, profileDir, onDeny: record });
+          if (decision) {
+            if (defense.monitorOnly) record({ ruleId: decision.info?.rule, title: decision.info?.title }, { name: String(exec?.arguments?.target ?? '') }, exec?.arguments?.target ?? '', decision.reason);
+            else return decision;
+          }
+        } catch (error) {
+          defense.lastError = String(error?.message ?? error);
+        }
+        return next();
+      }), 'crash-lore: install guard');
+      defense.hooks.preExecute = 'async';
+    }
+  }
+
+  const guardMode = () => {
+    if (!defense.enabled) return '已关闭';
+    if (defense.lastError) return '检查异常';
+    if (defense.monitorOnly || (!defense.hooks.write && !defense.hooks.preExecute)) return '仅监测';
+    if (!defense.hooks.write || !defense.hooks.preExecute) return '部分覆盖';
+    return '保护中';
+  };
+
+  ctx.effect(() => tools.register(withOutput({
+    name: 'crash_lore_guard',
+    description: '看崩溃防护自身的状态和最近的拦截记录：现在能拦什么、哪一层没接上（仅监测/部分覆盖）、最近拒绝了哪个改动和原因。怀疑某次改动被拦、或想知道防护是否真的生效时调它。',
+    parameters: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', description: '最近几条拦截，默认 5' },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      const limit = Math.max(1, Math.min(20, Number(args?.limit) || 5));
+      const lines = [`状态：${guardMode()}`];
+      lines.push(`开关：崩溃防护${defense.enabled ? '开启' : '关闭'}${defense.monitorOnly ? '，仅监测（只记录不拦）' : ''}`);
+      lines.push(`写前守卫（同步）：${defense.hooks.write === 'sync' ? '已接上，write/edit 改动 live 插件或 profile 配置时检查目标文本' : '未接上'}`);
+      lines.push(`安装前预检（异步）：${defense.hooks.preExecute === 'async' ? '已接上，plugin_manager 安装/启用前预检候选目录' : '未接上'}`);
+      if (defense.lastError) lines.push(`最近一次检查异常：${defense.lastError}`);
+      lines.push('未覆盖：bash/脚本里直接写文件、run_code 里自己 fs 写盘、外部编辑器保存、宿主自身升级。');
+      const recent = defense.denials.slice(-limit).reverse();
+      if (!recent.length) lines.push('最近没有拦截记录。');
+      for (const entry of recent) lines.push(`- ${entry.at} ${entry.rule} ${entry.title} → ${entry.target}`);
+      return { text: lines.join('\n'), mode: guardMode(), enabled: defense.enabled, monitorOnly: defense.monitorOnly, hooks: { ...defense.hooks }, denials: recent };
+    },
+  })), 'crash-lore: crash_lore_guard');
 
   /* Surface the newest unresolved incident once per session, so an agent knows *why* the
    * previous run died without being told. */

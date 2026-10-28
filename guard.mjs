@@ -211,7 +211,7 @@ export function startsRegex(text, index) {
 }
 
 /** A throw is module-level only when it sits at brace depth 0; `try { ... } catch` inside apply() is fine. */
-function topLevelThrow(text) {
+export function topLevelThrow(text) {
   const lines = text.split('\n');
   let depth = 0;
   for (let at = 0; at < lines.length; at += 1) {
