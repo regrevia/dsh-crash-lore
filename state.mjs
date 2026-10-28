@@ -249,10 +249,13 @@ function targetText(result) {
  * Status lines, one sentence per line. Pure: the tool card, the status page and tests all
  * read the same strings so the page never invents a second truth.
  */
-export function describeStatus(state = defenseRuntime()) {
+export function describeStatus(state = defenseRuntime(), options = {}) {
   const info = snapshot(state);
   const lines = [`模式 ${info.modeLabel}`];
   lines.push(`实际状态 ${info.capabilityLabel}`);
+  if (options.installCheck !== undefined) {
+    lines.push(options.installCheck ? "安装体检 开，装包后跟已装的比一遍" : "安装体检 关");
+  }
 
   const wired = LAYERS.filter((layer) => info.hooks[layer]).length;
   if (info.mode === 'off') {

@@ -618,7 +618,7 @@ export function apply(ctx, config = {}) {
       if (state.mode === 'off') removeHooks();
       else installHooks();
       const info = defenseState();
-      const lines = describeStatus();
+      const lines = describeStatus(undefined, { installCheck: config.installCheck !== false && state.mode !== "off" });
       const recent = recentDenials(state, limit);
       if (recent.length) {
         lines.push(`最近拒绝 ${recent.length} 条`);

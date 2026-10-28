@@ -201,6 +201,13 @@ test('observe mode sees the same risk, records it, and never refuses', async () 
   });
 });
 
+test("status card says whether the install check is on", () => {
+  const on = describeStatus(undefined, { installCheck: true }).join("\n");
+  assert.match(on, /安装体检 开/);
+  const off = describeStatus(undefined, { installCheck: false }).join("\n");
+  assert.match(off, /安装体检 关/);
+});
+
 test('off mode installs no hook and reports 已关闭, never 保护中', async () => {
   const ctx = makeContext();
   apply(ctx, { mode: 'off' });
