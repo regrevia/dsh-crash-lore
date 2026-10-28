@@ -3,7 +3,7 @@
 - 验收对象：`/Users/apple/Desktop/DSH/dsh-crash-lore`，version `0.2.1`，以 `link:` 装入真实宿主 profile `~/.dsh/profiles/desktop`。
 - 验收时间：2026-10-28T23:49:38+08:00 ～ 2026-10-29T00:03+08:00（UTC 记录见各 JSON 的 `at`）。中间 A 先落盘 guard.mjs 批量语法检查（23:54），再按 Lead 决定落盘安装路径 fail-closed（00:00）；**产品代码 2026-10-29 00:01 起正式冻结**，本报告数字均为冻结后快照。历史数据与新数据分两段记录。
 - 最终判定：**自动门禁通过 / 真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；真机激活未覆盖、待重启宿主后验证，**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
-- 环境：macOS；真实宿主 pid 90362（启动于 2026-10-28 17:28:53）；插件源码最后修改 2026-10-28 23:40 ～ 2026-10-29 00:00，**晚于宿主启动**，故真实宿主进程内加载的不是 0.2.1 最终代码（见「真机状态」）。
+- 环境：macOS；真实宿主 pid 90362（启动于 2026-10-28 17:28:53）；插件源码最后修改 2026-10-28 23:40 ～ 2026-10-29 00:00，**晚于宿主启动**，故真实宿主进程内加载的不是 0.2.1 最终代码（见「真机状态」）。截至 00:10 复核，该 entry 已 `fiberPhase: failed`、`crash_lore_*` 工具不可见，**本机当前防护是关的**；本宿主的动态重载通道同时失效，只能靠重启加载 0.2.1。
 - 证据来源标记：
   - `[自动·进程内]`：`test/integration/*` 用插件真实 `apply()`、真实注册的 guard/pre-execute handler，在 mock profile 上跑；不是真实宿主。
   - `[只读检查]`：只读真实 profile / 真实进程状态，未写入。
@@ -193,10 +193,12 @@ PASS p20-no-side-effects   被拒内容未执行
 只读检查（2026-10-28 23:50、2026-10-29 00:02，未写入真实 profile）：
 
 - 宿主 `pid 90362` 启动于 **17:28:53**；`defense.mjs` 最后修改 **2026-10-29 00:00:53**（安装 fail-closed 修复）、`guard.mjs` 23:55:20、`index.js` 23:55:09、`lib/resolve.mjs` 23:57:58。**这些都晚于宿主启动，当前进程加载的是改动前代码**，其行为不能作为 0.2.1 的真机验收证据。
-- 是**同一个宿主进程**在 boot 时加载了当时的 `index.js`：进程内 `crash_lore_guard` 能回「模式 开启 / 实际状态 正常 / 覆盖写前检查、安装前预检 / 最近一次检查 放行 → lead」，工具与 hook 都在；Config 目录显示 `absent` 是因为 boot 那份 0.2.0 没有导出 Config（0.2.1 才加）。不是两个实例。结论相同：现进程跑的是 boot 时代代码，不能证明 0.2.1；`crash_lore_rules` 查询为空（规则未落盘）同样只说明 boot 时代状态。
-- Lead 于 23:47 前后尝试激活：给 patch 加了一条 ping 注释和 `- id: crash-lore` override，宿主没有重新装载（3 次查询均 absent/inactive），随即用 `/tmp/patch.bak-lead`（加之前的备份）整体还原。故真实入口恢复只能靠**重启宿主**，不在本轮可完成范围；期间差异不是本轮验收改的产品行为。
-- profile 现状（只读）：依赖 `"dsh-crash-lore": "link:/Users/apple/Desktop/DSH/dsh-crash-lore"`；`cordis.patch.yml` 与 Lead 备份 `/tmp/patch.bak-lead` **逐字节一致**（sha256 `f7c3dcf3f35df3f45579a2e66ca310e744bf522a3bfd8ee28dda24c97f04acca`，无 `crash-lore` 行）。注：本报告早前基线曾记 `d41b4ec8…`，与当前不同，说明期间该文件被合法改动后又还原；**以当前 f7c3dcf3 为准**。
-- 待重启后补验：真实会话里 `write` 危险形态被拒且文件 sha256 不变、真实 PTC `run_code` 拒绝回传、真实 guard/observe/off 切换与 `crash_lore_guard` 文本一致、20 entry 预检耗时（批量解析后应 <200 ms）。
+- 是**同一个宿主进程**在 boot 时加载了当时的 `index.js`：boot 期间进程内 `crash_lore_guard` 曾能回「模式 开启 / 实际状态 正常 / 覆盖写前检查、安装前预检 / 最近一次检查 放行 → lead」；Config 目录显示 `absent` 是因为 boot 那份 0.2.0 没有导出 Config（0.2.1 才加），不是两个实例。
+- **2026-10-29 00:10 复核，该 entry 现已 `fiberPhase: failed`、`crash_lore_*` 工具在本会话不可见，即当前宿主里防护是关的**（不是「装好了在跑」）。插件生命周期状态以 `plugin_manager list_plugins` 的 `include:crash-lore`（`enabled: true / fiberPhase: failed`）为准，不以旧文字记录为准。
+- 00:12 尝试用合法通道 `plugin_manager set_plugin` / `set_bundle` 在线重载 0.2.1（先 disable 再 enable，各一次 + bundle 级各一次）：全部返回 `dsh: warning: 1 entry did not activate / crash-lore (dsh-crash-lore): Error: cannot create effect on inactive context`。同一报错在**与本插件无关**的操作里也作为 `adb (dsh-mobile-use)` 警告反复出现，说明这不是 crash-lore 的加载错误，而是**该宿主当前的动态 apply 通道整体不可用**（重新 apply 任何 entry 都会落在 inactive context 上）。结论：本会话内无法把 0.2.1 装上机，只能重启宿主。
+- 重载尝试没有留下持久副作用：`cordis.patch.yml` 在 00:00 后未再变化（当前 sha256 `95da2c6c5d737d7172605ad9a004165d9e80410ff3eb15bf912ed9c81b106b67`，无 `crash-lore` 行、无 `disabled` override），profile 依赖仍是 `link:/Users/apple/Desktop/DSH/dsh-crash-lore`，entry `enabled: true`。故**重启后会按正常路径加载 0.2.1**，无需任何手工修复。注：本文件当前 sha 与 Lead 备份 `/tmp/patch.bak-lead` 已不同（差异只是 `- id: adb / disabled: false` 两行，`adb` 在本宿主同样 failed），本报告早前写的 `f7c3dcf3…` 与「逐字节一致」据此作废，**以 95da2c6c… 为准**。
+- 待重启后补验（每项都要原始工具结果 + 时间，写进本文件，不通过就写哪一步失败）：① `plugin_manager list_plugins` 里 `include:crash-lore` 为 `fiberPhase: active`、`crash_lore_guard` 工具可见并报「保护中」且与真实 hook 一致；② 真实会话里危险 `write` 被拒且文件 sha256 不变，改正后同调用放行；③ 真实第二会话做同一动作，确认拒绝只回发起会话、该会话继续活着；④ 真实 PTC `run_code` 子调用被拒后原会话收到补充说明；⑤ guard/observe/off 三档切换与状态文本一致；⑥ 20 entry 预检耗时（批量解析后应 <200 ms）。
+- 附带要观察的一条：重启后 `set_plugin` / `set_bundle` 的在线重载是否恢复可用（本轮它是坏的）。若重启后仍报 `cannot create effect on inactive context`，那是宿主侧缺陷，应单独报给宿主，不记在插件账上。
 
 ## 6. 结论与残留风险
 
