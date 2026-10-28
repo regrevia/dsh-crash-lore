@@ -1,0 +1,71 @@
+{
+  "format": 1,
+  "title": {
+    "en": "dsh-crash-lore",
+    "zh": "dsh-crash-lore"
+  },
+  "description": {
+    "en": "A one-plugin index for dsh-crash-lore. Add this URL as an index source in Plugins → Discover.",
+    "zh": "dsh-crash-lore 的单插件索引。在「插件 → 发现 → 索引源」里添加这个地址即可。"
+  },
+  "metadata": {
+    "categories": {
+      "dev": {
+        "title": {
+          "en": "Developer tools",
+          "zh": "开发者工具"
+        }
+      }
+    },
+    "labels": {
+      "verified": {
+        "title": {
+          "en": "Verified",
+          "zh": "预检通过"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "dsh-crash-lore",
+      "title": {
+        "en": "Crash Lore",
+        "zh": "崩溃防线"
+      },
+      "description": {
+        "en": "Mines the host's real crash logs into 23 hard constraints (event callbacks must catch their own errors, one missing required config stops boot, a client entry that never activates fails the whole boot), runs a static preflight on a plugin source directory before install — 33 structural checks including node --check, duplicate patch ids, ESM require, and the mandatory tools.register output contract — and, when the host crashes repeatedly, quarantines the culprit with a reversible backup instead of hand-editing the profile. A clean directory exits 0; fatal or boot findings exit 1.",
+        "zh": "把宿主真实崩溃日志沉淀成 23 条硬约束（事件回调必须自己兜住异常、一个必填配置缺失就起不来、client 入口没激活会让 boot 整体失败），装插件前对源码目录跑静态预检——33 项结构检查，含 node --check、patch 同 id 重复、ESM 里写 require、以及 tools.register 必须声明 output 的契约——宿主反复崩溃时用可撤销的备份隔离元凶，而不是手改 profile。目录干净退出码 0，有致命/起不来项退出码 1。"
+      },
+      "icon": "https://raw.githubusercontent.com/regrevia/dsh-crash-lore/main/icon.svg",
+      "repository": {
+        "url": "https://github.com/regrevia/dsh-crash-lore"
+      },
+      "metadata": {
+        "category": "dev",
+        "keywords": [
+          "crash",
+          "preflight",
+          "doctor",
+          "plugin-safety",
+          "harness"
+        ],
+        "labels": [
+          "verified"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1793189905,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0-rc.1"
+          }
+        }
+      ]
+    }
+  ]
+}
