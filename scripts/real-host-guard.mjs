@@ -16,12 +16,18 @@
  * the file the fixture tries to corrupt is this repo's own `index.js`, whose sha256 is
  * compared before and after. A denied write must leave it byte-identical.
  *
+ * One unrelated host policy is switched off in the throwaway profile:
+ * `fs-observation-policy` (read-before-write). In a real session it would answer the
+ * retry with FS_NOT_OBSERVED before the file is touched, which hides whether this
+ * plugin allowed the corrected call. Disabling it changes no crash-lore decision: the
+ * deny cases are produced by crash-lore's own guard, which runs first).
+ *
  * Usage: node scripts/real-host-guard.mjs [--json]
  * Exit: 0 pass, 1 fail, 2 skipped (no DeepSeek Harness app on this machine).
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,6 +73,15 @@ function sha(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
+function reportEarly(started) {
+  return report({
+    probe: 'real-host-guard',
+    verdict: `FAIL real host process · ${checks.filter((check) => check.ok).length}/${checks.length} checks`,
+    checks,
+    ms: Date.now() - started,
+  });
+}
+
 function report(report_) {
   if (json) process.stdout.write(`${JSON.stringify(report_, null, 2)}\n`);
   else {
@@ -91,9 +106,12 @@ function main() {
   const before = sha(target);
   try {
     const create = run(['--profile', 'lab', '--from-default-profile', 'headless', '--dump-config'], { DSH_HOME: home });
-    add('profile created in a temp DSH_HOME', existsSync(profileDir), profileDir);
-    if (!existsSync(profileDir)) return 1;
+    if (!add('profile created in a temp DSH_HOME', existsSync(profileDir), profileDir)) return reportEarly(started);
 
+    /* Read-before-write is a separate host policy; switching it off in the throwaway
+     * profile lets the corrected retry actually reach the file. */
+    const patchFile = path.join(profileDir, 'cordis.patch.yml');
+    writeFileSync(patchFile, `${readFileSync(patchFile, 'utf8').replace(/^\[\]\s*$/m, '')}- id: fs-observation-policy\n  disabled: true\n`);
     const addRepo = run(['plugin', '--profile', 'lab', 'add', `link:${repo}`], { DSH_HOME: home });
     const addFixture = run(['plugin', '--profile', 'lab', 'add', `link:${fixture}`], { DSH_HOME: home });
     add('this package installed as a profile layer', /Done in \d+ms/.test(addRepo.out), addRepo.out.trim().split('\n').pop());
@@ -101,6 +119,7 @@ function main() {
 
     const dump = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
     add('loader composes both entries', /\n- id: crash-lore\n/.test(dump.out) && /\n- id: crash-lore-guard-probe\n/.test(dump.out));
+    add('unrelated read-before-write policy disabled for the loop check', /- id: fs-observation-policy\n  name: '@deepseek-ai\/dsh-fs-observation-policy'[\s\S]{0,80}?disabled: true/.test(dump.out));
 
     const bootEnv = {
       DSH_HOME: home,
@@ -118,7 +137,7 @@ function main() {
       probe = JSON.parse(readFileSync(outFile, 'utf8'));
     } catch {
       add('fixture reached the real tools service', false, 'fixture wrote no result');
-      return 1;
+      return reportEarly(started);
     }
     const byLabel = Object.fromEntries(probe.results.map((entry) => [entry.label, entry]));
     add('fixture reached the real tools service', true, `${probe.results.length} call(s)`);
@@ -131,6 +150,14 @@ function main() {
     add('dangerous write rejected by the live guard', denied?.isError === true, '');
     add('denial came from this plugin, not another layer', /CRASH_LORE_BLOCKED/.test(denial) && /dsh-crash-lore/.test(denial), '');
     add('denial names the rule and the reason', /P013/.test(denial) && /语法不合法/.test(denial), '');
+    add('denial tells the caller what to do next', /建议：/.test(denial) && /仍可以/.test(denial), '');
+
+    const runtimeDenied = byLabel['dangerous-runtime'];
+    const runtimeText = String(runtimeDenied?.text ?? runtimeDenied?.threw ?? '');
+    add('valid-JS crash shape rejected on the live file too', runtimeDenied?.isError === true && /P018/.test(runtimeText) && /process\.exit/.test(runtimeText), '');
+
+    const corrected = byLabel['corrected'];
+    add('corrected retry from the same caller succeeds', corrected?.isError === false, String(corrected?.threw ?? corrected?.head ?? '').slice(0, 80));
     add('denial returns to the caller instead of crashing the host', boot.signal === null && byLabel['benign-create'] !== undefined, '');
 
     const after = sha(target);
@@ -138,12 +165,14 @@ function main() {
 
     const fatal = /FATAL|uncaughtException|worker thread exited/i.test(boot.out);
     add('no worker/loader crash during the probe', !fatal, '');
+    globalThis.__clCalls = probe.results.map((entry) => ({ label: entry.label, isError: entry.isError === true, threw: entry.threw, head: String(entry.text ?? '').slice(0, 160) }));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
   const passed = checks.every((check) => check.ok);
   const result = {
     probe: 'real-host-guard',
+    calls: (globalThis.__clCalls ?? []),
     verdict: `${passed ? 'PASS' : 'FAIL'} real host process · ${checks.filter((c) => c.ok).length}/${checks.length} checks`,
     checks,
     ms: Date.now() - started,
