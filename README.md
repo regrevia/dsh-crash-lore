@@ -93,7 +93,11 @@ live 面 = profile 目录本身 + profile 里所有插件源码（含 `link:` �
 
 工具结果就是一次普通的报错，会话照常继续 —— 修完再提交同一个调用就通过。
 
-开关：`cordis.patch.yml` 里 `config.guard: false` 整体关闭，`config.monitorOnly: true` 只记录不拦（用于先观察误报）。状态别听它自己说：`crash_lore_guard` 会照实报 `保护中 / 仅监测 / 部分覆盖 / 检查异常 / 已关闭`，并各自说明哪一层没接上。
+开关：插件设置里选「开启 / 仅监测 / 关闭」三档，存进 `config.mode`；老配置里的 `guard: false`（关闭）、`monitorOnly: true`（仅监测）仍然认。仅监测用于先观察误报，只记录不拦。
+
+状态别听它自己说：`crash_lore_guard` 按实际接上的层报 `保护中 / 仅监测 / 部分覆盖 / 检查异常 / 已关闭`，并说明哪一层没接上（例如宿主没有 tools 服务时直接报 `不可用`，不会冒充保护中）。
+
+插件本身没被加载时没有东西能回答你 —— 这种情况不会显示成 `保护中`：宿主插件列表里该入口会标 `inactive`/`absent`，`crash_lore_guard` 工具也根本不存在。安装或升级后要重启一次宿主才会接上；改完插件源码最好先跑 `node cli.mjs check .`，语法/契约错误会让加载器直接停用入口，防护随之整层消失。
 
 **覆盖边界**（照实写在状态里，不假装全覆盖）：bash/脚本里 `cat > file`、`run_code` 里自己 `fs.writeFile`、外部编辑器保存、宿主自身升级，都绕过工具管线，这层看不到。
 
@@ -121,4 +125,4 @@ npm test               # node --test test/*.test.mjs
 node cli.mjs check .   # 用本插件的守卫预检它自己
 ```
 
-`test/core.test.mjs` 用合成日志样本覆盖三种日志格式、去重、脱敏、规则匹配与预检。
+`test/core.test.mjs` 用合成日志样本覆盖三种日志格式、去重、脱敏、规则匹配与预检；`test/defense.test.mjs` 覆盖目标解析、危险写法与放行反例；`test/host.test.mjs` 用假宿主跑三档模式、热重载、PTC 子调用与原会话回传；`test/integration/matrix.mjs` 是真实宿主姿态的端到端矩阵，`cold-install.mjs` 用 `npm pack` 出的 tarball 冷装后启动验证。

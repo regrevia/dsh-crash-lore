@@ -6,6 +6,8 @@
  * and a plugin whose job is preventing crashes must not become one.
  */
 import path from 'node:path';
+import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_HOME,
   readIncidents,
@@ -21,6 +23,25 @@ import {
   PROMPT_HEADER,
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
+import {
+  MODE_LABELS,
+  MODES,
+  claimFeedback,
+  clearHooks,
+  defenseRuntime,
+  defenseState,
+  denialFor,
+  describeStatus,
+  explicitMode,
+  modeOfConfig,
+  normalizeMode,
+  recentDenials,
+  recordCheck,
+  recordError,
+  recordFinding,
+  setHook,
+  setMode,
+} from './state.mjs';
 
 export const name = 'dsh-crash-lore';
 /* Harness ≥ the 2026-09 tool contract: every tool must declare an output shape and a renderer.
@@ -43,6 +64,49 @@ function withOutput(tool) {
 }
 
 export const inject = ['tools'];
+
+/* The live-editable mode needs a real schemastery schema, but this package is normally
+ * mounted through a symlink whose realpath has no node_modules: a bare import would fail to
+ * resolve and take boot down with it. Resolve through the running profile, and stay silent
+ * when that fails — the mode is then only reachable through the tool, never through a crash. */
+function schemaFactory() {
+  const bases = [];
+  if (process.env.DSH_PROFILE_DIR) bases.push(path.join(process.env.DSH_PROFILE_DIR, 'package.json'));
+  bases.push(import.meta.url);
+  for (const base of bases) {
+    try {
+      const load = createRequire(base);
+      const loaded = load('@deepseek-ai/schemastery');
+      const z = loaded?.default ?? loaded;
+      if (z && typeof z.object === 'function' && typeof z.string === 'function') return z;
+    } catch {
+      /* try the next base */
+    }
+  }
+  return undefined;
+}
+
+function makeConfig() {
+  const z = schemaFactory();
+  if (!z) return undefined;
+  try {
+    /* A live-editable field is a volatile ref: the app swaps the value in place instead of
+     * restarting the plugin. Older schema packages have no such marking, and boot must not fail. */
+    const mode = z.string().default('protect').description('崩溃防护模式：protect 开启，observe 仅监测，off 关闭');
+    const marked = typeof mode.volatile === 'function' ? mode.volatile() : mode;
+    return z.object({
+      mode: marked,
+      home: z.string().description('崩溃日志与规则所在目录'),
+      promptChars: z.number().default(1000).description('提示词里规则的字数上限'),
+      guard: z.boolean().description('旧开关，等价于 mode=off'),
+      monitorOnly: z.boolean().description('旧开关，等价于 mode=observe'),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+export const Config = makeConfig();
 
 function propOf(target, key) {
   try {
@@ -75,6 +139,13 @@ function log(message) {
 export function apply(ctx, config = {}) {
   const home = typeof config.home === 'string' && config.home ? config.home : DEFAULT_HOME;
   const promptBudget = Number.isFinite(config.promptChars) ? Math.max(300, Math.min(2000, config.promptChars)) : 1000;
+
+  /* One live object per process, so a hot reload keeps the denial history and the
+   * "already told the origin session" ledger instead of resetting them. */
+  const state = defenseRuntime();
+  state.override = null;
+  setMode(state, modeOfConfig(config));
+  clearHooks(state);
 
   /* Boot scan: never throws, never blocks activation. A crash during the last run left an
    * artifact on disk; this is the boot where it gets turned into lore. */
@@ -127,6 +198,7 @@ export function apply(ctx, config = {}) {
 
   const tools = serviceOf(ctx, 'tools');
   if (!tools || typeof tools.register !== 'function') {
+    clearHooks(state);
     log('没有 tools 服务，本次只做扫描和提示词注入');
     return;
   }
@@ -298,91 +370,252 @@ export function apply(ctx, config = {}) {
   })), 'crash-lore: crash_lore_heal');
 
   /* ---- live defense ----------------------------------------------------------------
+   * Three layers stay separate on purpose: the user's mode (开启 / 仅监测 / 关闭), what the
+   * DSH actually wired (正常 / 部分覆盖 / 不可用 / 检查异常), and what the last check did
+   * (放行 / 观察到风险 / 已阻止). Only the first is a choice; the other two are read from
+   * reality, so a missing interface can never be reported as 保护中.
    * Two host mechanisms carry the refusal: a sync `tools.guard()` for text a write/edit
    * would put into a file the running host loads, and the async `tools/pre-execute`
    * waterfall for installs/enables, where the whole candidate can be preflighted.
    * Both fail open: a defense plugin must not become the crash. */
-  const defense = {
-    enabled: config.guard !== false,
-    monitorOnly: config.monitorOnly === true,
-    hooks: { write: null, preExecute: null },
-    denials: [],
-    lastError: null,
-  };
   const profileDir = process.env.DSH_PROFILE_DIR || path.join(home, 'profiles', 'desktop');
-  const surfaces = liveSurfaces(profileDir);
+  let surfaces;
+  try {
+    surfaces = liveSurfaces(profileDir);
+  } catch (error) {
+    recordError(state, error);
+    surfaces = { profileDir, plugins: [], patchFile: '', pkgFile: '' };
+  }
   const targetLabel = (surface, file) => (surface?.name && surface.name !== 'profile' ? `${surface.name} · ${file}` : String(file ?? 'profile'));
-  const record = (finding, surface, file, reason) => {
-    defense.denials.push({
-      at: new Date().toISOString(),
-      rule: finding?.ruleId ?? '?',
-      title: finding?.title ?? '',
-      target: targetLabel(surface, file),
-      reason,
-    });
-    if (defense.denials.length > 20) defense.denials.shift();
-    log(`崩溃防护拦截 ${finding?.ruleId ?? '?'} @ ${targetLabel(surface, file)}`);
+
+  /* Read the mode from the config the fiber currently holds, not from the closure: a live
+   * config edit and a restart both have to be visible to hooks registered earlier. */
+  const liveMode = () => {
+    let current = null;
+    try {
+      const fiber = propOf(ctx, 'fiber');
+      current = fiber && typeof fiber === 'object' ? fiber.config : null;
+    } catch {
+      current = null;
+    }
+    const fromFiber = current && typeof current === 'object' ? explicitMode(current) : null;
+    if (fromFiber) return fromFiber;
+    if (state.override && MODES.includes(state.override)) return normalizeMode(state.override, state.mode);
+    const fromClosure = explicitMode(config);
+    return fromClosure ?? normalizeMode(modeOfConfig(config), state.mode);
   };
 
-  if (defense.enabled) {
-    if (typeof tools.guard === 'function' && !defense.monitorOnly) {
-      ctx.effect(() => tools.guard((exec) => {
-        try {
-          return guardWrite(exec, { surfaces, onDeny: record }) ?? guardShell(exec, { surfaces, onDeny: record });
-        } catch (error) {
-          defense.lastError = String(error?.message ?? error);
-          return undefined;
-        }
-      }), 'crash-lore: write guard');
-      defense.hooks.write = 'sync';
-    }
-    if (typeof ctx.on === 'function') {
-      ctx.effect(() => ctx.on('tools/pre-execute', async (exec, next) => {
-        try {
-          const decision = await preExecute(exec, { surfaces, profileDir, onDeny: record });
-          if (decision) {
-            if (defense.monitorOnly) record({ ruleId: decision.info?.rule, title: decision.info?.title }, { name: String(exec?.arguments?.target ?? '') }, exec?.arguments?.target ?? '', decision.reason);
-            else return decision;
+  const record = (finding, surface, file, reason, verdict, callId) => {
+    const target = targetLabel(surface, file);
+    const done = recordFinding(state, {
+      callId,
+      rule: finding?.ruleId ?? finding?.rule,
+      title: finding?.title,
+      target,
+      reason,
+    }, verdict);
+    if (!done.duplicate) log(`崩溃防护${verdict === 'observe' ? '发现风险' : '拦截'} ${done.entry.rule} @ ${target}`);
+    return done;
+  };
+
+  /* Hooks follow the live mode, not the value read once at apply() time. A config write can
+   * commit between apply() and the first tool call, and a card that reports 开启 while no hook
+   * exists is worse than having no card. Installing is idempotent; turning the defense off
+   * really takes the hooks back out instead of leaving dormant ones behind. */
+  const hookDisposers = [];
+  /* A hook can be taken back out by a mode change and again by plugin unload; both paths run
+   * the same idempotent wrapper so the second call never touches a disposed hook. */
+  const track = (disposer) => {
+    if (typeof disposer !== 'function') return () => {};
+    let used = false;
+    const call = () => {
+      if (used) return;
+      used = true;
+      disposer();
+    };
+    hookDisposers.push(call);
+    return call;
+  };
+
+  const installHooks = () => {
+    if (state.hooks.write || state.hooks.preExecute) return;
+
+    if (typeof tools.guard === 'function') {
+      ctx.effect(() => {
+        const disposer = tools.guard((exec) => {
+          try {
+            const mode = liveMode();
+            if (mode === 'off') return undefined;
+            const onDeny = (finding, surface, file, reason) => {
+              record(finding, surface, file, reason, mode === 'observe' ? 'observe' : 'deny', exec?.callId);
+            };
+            const outcome = guardWrite(exec, { surfaces, onDeny }) ?? guardShell(exec, { surfaces, onDeny });
+            const target = exec?.arguments?.path ?? exec?.arguments?.file ?? exec?.arguments?.target;
+            if (!outcome && typeof target === 'string' && target) recordCheck(state, { target: targetLabel(null, target) });
+            return mode === 'observe' ? undefined : outcome;
+          } catch (error) {
+            recordError(state, error);
+            return undefined;
           }
-        } catch (error) {
-          defense.lastError = String(error?.message ?? error);
-        }
-        return next();
-      }), 'crash-lore: install guard');
-      defense.hooks.preExecute = 'async';
+        });
+        return track(disposer);
+      }, 'crash-lore: write guard');
+      setHook(state, 'write', 'sync');
+    } else {
+      log('本机没有写前守卫接口，这一层没接上');
     }
+
+    if (typeof ctx.on === 'function') {
+      ctx.effect(() => {
+        const disposer = ctx.on('tools/pre-execute', async (exec, next) => {
+          try {
+            const mode = liveMode();
+            if (mode === 'off') return next();
+            const decision = await preExecute(exec, {
+              surfaces,
+              profileDir,
+              onDeny: (finding, surface, file, reason) => {
+                record(finding, surface, file, reason, mode === 'observe' ? 'observe' : 'deny', exec?.callId);
+              },
+            });
+            if (decision && mode !== 'observe') return decision;
+            if (!decision && exec?.name === 'plugin_manager') recordCheck(state, { target: targetLabel(null, exec?.arguments?.target) });
+          } catch (error) {
+            recordError(state, error);
+          }
+          return next();
+        });
+        return track(disposer);
+      }, 'crash-lore: install guard');
+      setHook(state, 'preExecute', 'async');
+    } else {
+      log('本机没有安装前预检接口，这一层没接上');
+    }
+  };
+
+  const removeHooks = () => {
+    while (hookDisposers.length) {
+      const disposer = hookDisposers.pop();
+      try {
+        disposer();
+      } catch (error) {
+        recordError(state, error);
+      }
+    }
+    clearHooks(state);
+  };
+
+  if (state.mode === 'off') removeHooks();
+  else installHooks();
+
+  /* ---- feedback to the originating session -----------------------------------------
+   * A PTC subcall's denied result is swallowed by run_code, so the agent that asked for it
+   * never sees why. Hand the reason back as one supplemental context on the same session,
+   * keyed by the subcall id: a re-dump of the same denial is never delivered twice, nothing
+   * is broadcast, and the session keeps running. */
+  if (typeof ctx.on === 'function') {
+    ctx.effect(() => ctx.on('tools/post-execute', async (exec, result, next) => {
+      try {
+        if (!result?.isError) return next();
+        const callId = exec?.callId ? String(exec.callId) : '';
+        const rootId = exec?.rootCallId ? String(exec.rootCallId) : callId;
+        if (!callId || rootId === callId) return next();
+        const entry = denialFor(state, callId);
+        if (!entry || !claimFeedback(state, callId)) return next();
+        const step = String(exec?.name ?? '子调用');
+        const target = [exec?.arguments?.target, exec?.arguments?.path, exec?.arguments?.file, entry.target]
+          .map((value) => (typeof value === 'string' ? value : ''))
+          .find(Boolean) ?? '';
+        const text = [
+          `崩溃防线阻止了一次子调用（${step}）。会话可以继续。`,
+          `规则 ${entry.rule}${entry.title ? `：${entry.title}` : ''}`,
+          `原因：${entry.reason || entry.title || '目标文件会被下一次启动加载，写坏会让宿主起不来'}`,
+          `未执行：${step}${target ? ` → ${target}` : ''}`,
+          '改法：按上面的原因改掉再重试这一步；哪条规则不清楚就先跑 crash_lore_check 看致命项。',
+        ].join('\n');
+        const message = {
+          id: randomUUID(),
+          role: 'user',
+          content: [{ type: 'text', text }],
+          source: { kind: 'ptc-mode' },
+        };
+        return { kind: 'accept', additionalContexts: [message] };
+      } catch (error) {
+        recordError(state, error);
+        return next();
+      }
+    }), 'crash-lore: ptc feedback');
   }
 
-  const guardMode = () => {
-    if (!defense.enabled) return '已关闭';
-    if (defense.lastError) return '检查异常';
-    if (defense.monitorOnly || (!defense.hooks.write && !defense.hooks.preExecute)) return '仅监测';
-    if (!defense.hooks.write || !defense.hooks.preExecute) return '部分覆盖';
-    return '保护中';
+  /* Mode is the only writable knob, and it is written through the DSH config editor, so
+   * the choice lands in the profile patch DSH itself owns: no config pass-through, no
+   * hand-edited file, and an unchanged value leaves no row behind. */
+  const persistMode = async (value) => {
+    if (!MODES.includes(value)) return '模式只认 protect / observe / off，这一项没有保存';
+    const editor = serviceOf(ctx, 'configEditor');
+    if (!editor || typeof editor.configuration !== 'function' || typeof editor.edit !== 'function') {
+      return '本机没有提供配置接口，模式没有保存';
+    }
+    let rows = [];
+    try {
+      rows = editor.configuration();
+    } catch (error) {
+      recordError(state, error);
+      return '读配置入口失败，模式没有保存';
+    }
+    const row = Array.isArray(rows)
+      ? rows.find((item) => item?.entry?.options?.name === name || item?.entry?.options?.id === 'crash-lore')
+      : null;
+    if (!row) return 'profile 里找不到这个插件的配置入口，模式没有保存';
+    try {
+      await editor.edit(row.entry, (current) => {
+        const next = current && typeof current === 'object' ? { ...current } : {};
+        delete next.guard;
+        delete next.monitorOnly;
+        next.mode = value;
+        return next;
+      });
+    } catch (error) {
+      recordError(state, error);
+      return `模式没有保存：${error?.message ?? error}`;
+    }
+    state.override = value;
+    setMode(state, value);
+    return `模式已切到 ${MODE_LABELS[value]}`;
   };
 
   ctx.effect(() => tools.register(withOutput({
     name: 'crash_lore_guard',
-    description: '看崩溃防护自身的状态和最近的拦截记录：现在能拦什么、哪一层没接上（仅监测/部分覆盖）、最近拒绝了哪个改动和原因。怀疑某次改动被拦、或想知道防护是否真的生效时调它。',
+    description: '看崩溃防护现在是什么模式、DSH 实际接上了哪几层检查、最近一次检查和拒绝记录。传 mode 可以把防护切成 开启 / 仅监测 / 关闭，写进配置，刷新和重启后保留。',
     parameters: {
       type: 'object',
       properties: {
-        limit: { type: 'integer', description: '最近几条拦截，默认 5' },
+        limit: { type: 'integer', description: '最近几条拒绝记录，默认 5' },
+        mode: { type: 'string', enum: ['protect', 'observe', 'off'], description: 'protect 开启，observe 仅监测，off 关闭' },
       },
       additionalProperties: false,
     },
     execute: async (args) => {
       const limit = Math.max(1, Math.min(20, Number(args?.limit) || 5));
-      const lines = [`状态：${guardMode()}`];
-      lines.push(`开关：崩溃防护${defense.enabled ? '开启' : '关闭'}${defense.monitorOnly ? '，仅监测（只记录不拦）' : ''}`);
-      lines.push(`写前守卫（同步）：${defense.hooks.write === 'sync' ? '已接上，write/edit 改动 live 插件或 profile 配置时检查目标文本' : '未接上'}`);
-      lines.push(`安装前预检（异步）：${defense.hooks.preExecute === 'async' ? '已接上，plugin_manager 安装/启用前预检候选目录' : '未接上'}`);
-      if (defense.lastError) lines.push(`最近一次检查异常：${defense.lastError}`);
-      lines.push('未覆盖：bash/脚本里直接写文件、run_code 里自己 fs 写盘、外部编辑器保存、宿主自身升级。');
-      const recent = defense.denials.slice(-limit).reverse();
-      if (!recent.length) lines.push('最近没有拦截记录。');
-      for (const entry of recent) lines.push(`- ${entry.at} ${entry.rule} ${entry.title} → ${entry.target}`);
-      return { text: lines.join('\n'), mode: guardMode(), enabled: defense.enabled, monitorOnly: defense.monitorOnly, hooks: { ...defense.hooks }, denials: recent };
+      const note = typeof args?.mode === 'string' ? await persistMode(args.mode) : null;
+      /* The mode can also change through a config write that does not restart the plugin, so the
+       * card re-reads it instead of trusting whatever the last apply() saw. */
+      setMode(state, liveMode());
+      /* Keep the hooks and the mode in step even when the value changed without a restart. */
+      if (state.mode === 'off') removeHooks();
+      else installHooks();
+      const info = defenseState();
+      const lines = describeStatus();
+      const recent = recentDenials(state, limit);
+      if (recent.length) {
+        lines.push(`最近拒绝 ${recent.length} 条`);
+        for (const entry of recent) lines.push(`- ${entry.at} ${entry.rule} ${entry.title} → ${entry.target}`);
+      } else if (info.capability !== 'off') {
+        lines.push('最近没有拒绝记录');
+      }
+      lines.push('覆盖不到：命令行直接写文件、外部编辑器保存、DSH 自身升级。');
+      if (note) lines.push(note);
+      return { text: lines.join('\n'), ...info, denials: recent, note };
     },
   })), 'crash-lore: crash_lore_guard');
 

@@ -269,6 +269,29 @@ test('scan migrates legacy aggregate rows：count 保留，补出每次发生的
   assert.equal(migrated.lastTs, '2025-10-05T00:00:00.000Z');
 });
 
+test('事件数超过身份保留上限后，count 仍然准确（上限只截身份，不截事实）', () => {
+  const home = tmpHome();
+  const dirs = [path.join(home, 'logs')];
+  const total = 105;
+  const base = Date.parse('2026-10-01T00:00:00.000Z');
+  const stamps = [];
+  for (let at = 0; at < total; at += 1) {
+    const stamp = new Date(base + at * 3600 * 1000).toISOString();
+    stamps.push(stamp);
+    writeArtifact(home, `crash-${at}-host.log`, HOST_LOG.replace('2026-10-28T09:15:33.952Z', stamp));
+  }
+  scan({ home, dirs });
+  const row = readIncidents(home)[0];
+  assert.equal(row.count, total, '累计次数必须是真实事件数，不能停在身份上限');
+  assert.equal(row.occurrenceIds.length, 100, '身份列表截到上限，避免无限增长');
+  assert.equal(row.occurrenceTimes.length, 100);
+  assert.ok(row.occurrenceSeen && row.occurrenceSeen2, '身份记忆用两个独立过滤器，单次位碰撞不能吞掉真实事件');
+  assert.equal(row.lastTs, stamps[stamps.length - 1]);
+  const forced = scan({ home, dirs, force: true });
+  assert.equal(forced.bumped, 0, '重扫不得再累加');
+  assert.equal(readIncidents(home)[0].count, total);
+});
+
 test('importCorpus dedupes by fingerprint across repeated runs', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-import-'));
   const corpus = path.join(home, 'corpus.jsonl');
@@ -279,4 +302,42 @@ test('importCorpus dedupes by fingerprint across repeated runs', () => {
   assert.equal(importCorpus(home, corpus).imported, 2);
   assert.equal(importCorpus(home, corpus).imported, 0);
   assert.equal(readIncidents(home).length, 2);
+});
+
+test('旧条目补出真实事件后，强制重扫不再把累计次数叠成新事件', () => {
+  const home = tmpHome();
+  const dirs = [path.join(home, 'logs')];
+  writeArtifact(home, 'crash-one-host.log', HOST_LOG);
+  scan({ home, dirs });
+  const row = readIncidents(home)[0];
+  assert.equal(row.count, 1);
+  /* Roll the stored row back to the pre-0.2.1 aggregate shape: count kept, per-event ids gone. */
+  const { occurrenceIds, occurrenceTimes, occurrenceSynthetic, ...legacy } = row;
+  fs.writeFileSync(path.join(home, 'crash-lore', 'incidents.jsonl'), `${JSON.stringify(legacy)}\n`);
+  const first = scan({ home, dirs, force: true });
+  const afterFirst = readIncidents(home)[0];
+  assert.equal(afterFirst.count, 1, '一份真实日志只能算一次，不能把迁移补出的次数当新事件再加一');
+  assert.equal(afterFirst.occurrenceIds.length, 1);
+  assert.equal(afterFirst.occurrenceSynthetic, false);
+  /* Everything from here on must converge: no bumps, no growth. */
+  for (let round = 0; round < 3; round += 1) {
+    const result = scan({ home, dirs, force: true });
+    assert.equal(result.bumped, 0, `第 ${round + 2} 次强制重扫不得再记新事件`);
+    assert.equal(readIncidents(home)[0].count, 1);
+  }
+});
+
+test('首次出现三份事故落成三条事件，不是一条', () => {
+  const home = tmpHome();
+  const dirs = [path.join(home, 'logs')];
+  const times = ['2026-10-28T09:15:33.952Z', '2026-10-28T10:15:33.952Z', '2026-10-28T11:15:33.952Z'];
+  times.forEach((time, at) => writeArtifact(home, `crash-${at}-host.log`, HOST_LOG.replace('2026-10-28T09:15:33.952Z', time)));
+  scan({ home, dirs });
+  const row = readIncidents(home).find((item) => item.kind === 'uncaught-exception');
+  assert.equal(row.count, 3, '三份独立事故必须落成三条');
+  assert.equal(row.occurrenceIds.length, 3);
+  assert.equal(row.lastTs, times[2], 'lastTs 取最新一次');
+  const forced = scan({ home, dirs, force: true });
+  assert.equal(forced.bumped, 0, '101 条同形日志重扫不增数');
+  assert.equal(readIncidents(home).find((item) => item.kind === 'uncaught-exception').count, 3);
 });

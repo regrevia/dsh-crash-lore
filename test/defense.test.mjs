@@ -12,6 +12,9 @@ import {
   preExecute,
   candidateDir,
   blockReason,
+  markSurfacesDirty,
+  refreshSurfaces,
+  lastPreflightStatus,
 } from '../defense.mjs';
 
 function tmp(prefix = 'crash-lore-defense-') {
@@ -212,4 +215,251 @@ test('refusal text carries state, target, rule, risk and a way forward', () => {
   for (const part of ['本次操作未执行', 'dev-plugin', '/p/index.js:3', 'P014', '风险：', '建议：', '继续读代码', '写入']) {
     assert.ok(reason.includes(part), `missing ${part}`);
   }
+});
+
+test('a relative write is resolved against the originating session directory', () => {
+  const { profile, linked } = fixtureProfile();
+  const surfaces = liveSurfaces(profile);
+  const call = (file, cwd) => guardWrite(
+    { name: 'write', arguments: { file_path: file, content: "throw new Error('boom');\n" } },
+    { surfaces, cwd },
+  );
+
+  /* the file is live when the session sits in the parent of the linked plugin */
+  const reason = call(path.basename(linked) + '/index.js', path.dirname(linked));
+  assert.match(reason, /P014/);
+
+  /* no session directory at all: refuse with an explicit reason, never guess */
+  const blind = call(path.basename(linked) + '/index.js', undefined);
+  assert.match(blind, /unresolved/);
+  assert.match(blind, /相对路径/);
+  assert.match(blind, /绝对路径/);
+
+  /* the same relative path resolving outside every live root is ordinary work */
+  assert.equal(call('scratch.js', path.dirname(linked)), undefined);
+});
+
+test('a symlink pointing at a live plugin is the live plugin', () => {
+  const { profile, linked, root } = fixtureProfile();
+  const surfaces = liveSurfaces(profile);
+  const link = path.join(root, 'link-live');
+  fs.symlinkSync(linked, link);
+  const reason = guardWrite(
+    { name: 'write', arguments: { file_path: path.join(link, 'index.js'), content: "throw new Error('boom');\n" } },
+    { surfaces },
+  );
+  assert.match(reason, /P014/);
+  assert.match(reason, /dev-plugin/);
+});
+
+test('a live plugin under an ancestor named tools/bin/test is still judged', () => {
+  const { profile, root } = fixtureProfile();
+  for (const dir of ['tools', 'bin', 'test']) {
+    const plugin = path.join(root, dir, 'nested-plugin');
+    write(path.join(plugin, 'package.json'), JSON.stringify({ name: 'nested-plugin', type: 'module' }));
+    const file = path.join(plugin, 'index.js');
+    write(file, 'export const a = 1;\n');
+    const pkgFile = path.join(profile, 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8'));
+    pkg.dependencies['nested-plugin'] = `link:${plugin}`;
+    write(pkgFile, JSON.stringify(pkg));
+    const surfaces = liveSurfaces(profile);
+    const reason = guardWrite(
+      { name: 'write', arguments: { file_path: file, content: "throw new Error('boom');\n" } },
+      { surfaces },
+    );
+    assert.match(reason, /P014/, `ancestor ${dir} must not skip inspection`);
+    delete pkg.dependencies['nested-plugin'];
+    write(pkgFile, JSON.stringify(pkg));
+  }
+});
+
+test('the surface snapshot is refreshed in place after the profile changes', () => {
+  const { profile, root, linked } = fixtureProfile();
+  const surfaces = liveSurfaces(profile);
+  assert.equal(classify(path.join(linked, 'index.js'), surfaces).live, true);
+
+  const before = surfaces.refreshedAt;
+  assert.ok(surfaces.refreshedAt >= before);
+  assert.equal(surfaces.stale, false);
+
+  /* mutate the snapshot the way activation would: in place, no new object */
+  const additions = path.join(root, 'late-plugin');
+  write(path.join(additions, 'package.json'), JSON.stringify({ name: 'late-plugin', type: 'module' }));
+  write(path.join(additions, 'index.js'), 'export const a = 1;\n');
+  const pkgFile = path.join(profile, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8'));
+  pkg.dependencies['late-plugin'] = `link:${additions}`;
+  write(pkgFile, JSON.stringify(pkg));
+  markSurfacesDirty(surfaces);
+  refreshSurfaces(surfaces, profile);
+  assert.equal(surfaces.plugins.some((entry) => entry.name === 'late-plugin'), true);
+  assert.equal(classify(path.join(additions, 'index.js'), surfaces).live, true);
+
+  /* a refresh that cannot stat keeps the old values and never throws */
+  const saved = surfaces.profileDir;
+  surfaces.profileDir = path.join(root, 'gone');
+  surfaces.pkgFile = path.join(root, 'gone', 'package.json');
+  markSurfacesDirty(surfaces);
+  refreshSurfaces(surfaces, surfaces.profileDir);
+  assert.equal(typeof surfaces.stale, 'boolean');
+  surfaces.profileDir = saved;
+});
+
+test('enable mapping reaches the entry id the loader actually uses', async () => {
+  const { profile } = fixtureProfile();
+  const surfaces = liveSurfaces(profile);
+  const dir = candidateDir({ action: 'set_plugin', target: 'include:dev-plugin' }, surfaces);
+  assert.equal(fs.realpathSync(dir), fs.realpathSync(path.join(surfaces.profileDir, '..', '..', 'dev-plugin')));
+
+  const finding = await preExecute(
+    { name: 'plugin_manager', arguments: { action: 'set_plugin', target: 'include:dev-plugin', enabled: true } },
+    { surfaces, profileDir: profile },
+  );
+  assert.equal(finding, undefined);
+
+  const bad = path.join(dir, 'index.js');
+  write(bad, "throw new Error('boom');\n");
+  const decision = await preExecute(
+    { name: 'plugin_manager', arguments: { action: 'set_plugin', target: 'include:dev-plugin', enabled: true } },
+    { surfaces, profileDir: profile },
+  );
+  assert.equal(decision.kind, 'deny');
+  assert.match(decision.info.rule, /P014/);
+});
+
+test('set_bundle refuses with 未检查 when the enabled content cannot be opened', async () => {
+  const { profile } = fixtureProfile();
+  const surfaces = liveSurfaces(profile);
+  const decision = await preExecute(
+    { name: 'plugin_manager', arguments: { action: 'set_bundle', target: 'ghost-bundle', enabled: true } },
+    { surfaces, profileDir: profile },
+  );
+  assert.equal(decision.kind, 'deny');
+  assert.match(decision.reason, /未检查/);
+  assert.match(decision.reason, /install_bundle/);
+
+  /* disabling a bundle is never gated */
+  assert.equal(await preExecute(
+    { name: 'plugin_manager', arguments: { action: 'set_bundle', target: 'ghost-bundle', enabled: false } },
+    { surfaces, profileDir: profile },
+  ), undefined);
+});
+
+test('the same relative path is judged per originating session directory', () => {
+  const { profile, root, linked } = fixtureProfile();
+  const surfaces = liveSurfaces(profile);
+  const other = tmp('crash-lore-other-session-');
+  const agentIn = { session: { header: { cwd: path.dirname(linked) } } };
+  const agentOut = { session: { header: { cwd: other } } };
+  const call = (agent) => guardWrite(
+    { name: 'write', arguments: { file_path: path.basename(linked) + '/index.js', content: "throw new Error('boom');\n" }, agent },
+    { surfaces },
+  );
+
+  /* session A sits above the live plugin: the relative path lands on a live file */
+  assert.match(call(agentIn), /P014/);
+  /* session B sits elsewhere: the same relative path is ordinary work for it */
+  assert.equal(call(agentOut), undefined);
+  /* and the other session's check did not poison A's judgement */
+  assert.match(call(agentIn), /P014/);
+  fs.rmSync(other, { recursive: true, force: true });
+});
+
+test('disabling a live entry removes it from the protection scope after refresh', () => {
+  const { profile, linked } = fixtureProfile();
+  const surfaces = liveSurfaces(profile);
+  const file = path.join(linked, 'index.js');
+  const bad = "throw new Error('boom');\n";
+  assert.match(guardWrite({ name: 'write', arguments: { file_path: file, content: bad } }, { surfaces }), /P014/);
+
+  write(path.join(profile, 'cordis.patch.yml'), '- insert:\n    - id: a\n      name: dev-plugin\n      disabled: true\n');
+  markSurfacesDirty(surfaces);
+  refreshSurfaces(surfaces, profile);
+  assert.equal(classify(file, surfaces).live, false);
+  assert.equal(guardWrite({ name: 'write', arguments: { file_path: file, content: bad } }, { surfaces }), undefined);
+
+  write(path.join(profile, 'cordis.patch.yml'), '- insert:\n    - id: a\n      name: dev-plugin\n');
+  markSurfacesDirty(surfaces);
+  refreshSurfaces(surfaces, profile);
+  assert.equal(classify(file, surfaces).live, true);
+});
+
+/** A plugin whose own bundle patch is the only thing it contributes (cold-install shape). */
+function coldInstallFixture() {
+  const root = tmp('crash-lore-cold-');
+  const profile = path.join(root, 'profile');
+  const plugin = path.join(root, 'own-bundled');
+  write(path.join(plugin, 'package.json'), JSON.stringify({
+    name: 'own-bundled',
+    version: '1.0.0',
+    type: 'module',
+    dsh: { bundle: { patch: 'cordis.patch.yml' } },
+  }));
+  write(path.join(plugin, 'cordis.patch.yml'), '- insert:\n    - id: own-a\n      name: own-bundled\n');
+  write(path.join(plugin, 'index.js'), 'export function apply() {}\n');
+  /* no dsh.profile.bundles: a cold/install-time profile has not mounted any bundle yet */
+  write(path.join(profile, 'package.json'), JSON.stringify({ name: 'profile', dependencies: { 'own-bundled': `link:${plugin}` } }));
+  write(path.join(profile, 'cordis.patch.yml'), '- insert:\n    - id: own\n      name: own-bundled\n');
+  return { root, profile, plugin };
+}
+
+test('a self-bundling plugin is live even when the profile declares no bundles', () => {
+  const { profile, plugin } = coldInstallFixture();
+  const surfaces = liveSurfaces(profile);
+  const file = path.join(plugin, 'index.js');
+  assert.equal(classify(file, surfaces).live, true);
+  const reason = guardWrite({ name: 'write', arguments: { file_path: file, content: "throw new Error('boom');\n" } }, { surfaces });
+  assert.match(reason, /P014/);
+
+  write(path.join(profile, 'cordis.patch.yml'), '- insert:\n    - id: own\n      name: own-bundled\n      disabled: true\n');
+  markSurfacesDirty(surfaces);
+  refreshSurfaces(surfaces, profile);
+  assert.equal(classify(file, surfaces).live, false);
+  assert.equal(guardWrite({ name: 'write', arguments: { file_path: file, content: "throw new Error('boom');\n" } }, { surfaces }), undefined);
+});
+
+/** Twenty entry files of a size that makes the install budget observable. */
+function installCandidate({ broken = false, bytes = 400 * 1024 } = {}) {
+  const dir = tmp('crash-lore-candidate-');
+  write(path.join(dir, 'package.json'), JSON.stringify({ name: 'candidate', version: '1.0.0', type: 'module' }));
+  for (let i = 0; i < 20; i += 1) {
+    const lines = [];
+    for (let n = 0; n < Math.ceil(bytes / 40); n += 1) lines.push(`export const v${i}_${n} = ${n};`);
+    const text = i === 19 && broken ? 'export function apply( {\n' : `${lines.join('\n')}\n`;
+    write(path.join(dir, `feature-${String(i).padStart(2, '0')}`, 'index.js'), text);
+  }
+  return dir;
+}
+
+const installExec = (target) => ({ name: 'plugin_manager', arguments: { action: 'install_bundle', target: `link:${target}` } });
+
+test('install refuses a candidate whose entry syntax is broken, and allows the same shape when legal', async () => {
+  const { profile } = coldInstallFixture();
+  const surfaces = liveSurfaces(profile);
+
+  const good = installCandidate();
+  const allowed = await preExecute(installExec(good), { surfaces });
+  assert.equal(allowed, undefined, 'twenty large but legal entries must not be refused');
+
+  const bad = installCandidate({ broken: true });
+  const refused = await preExecute(installExec(bad), { surfaces });
+  assert.equal(refused?.kind, 'deny');
+  assert.equal(refused.info.rule, 'P013');
+  assert.match(refused.reason, /P013/);
+  const status = lastPreflightStatus();
+  assert.equal(status.unchecked, 0);
+  assert.ok(status.checked > 0);
+});
+
+test('install refuses with uninspected when the budget cannot finish, and never calls it a syntax error', async () => {
+  const { profile } = coldInstallFixture();
+  const surfaces = liveSurfaces(profile);
+  const dir = installCandidate();
+  const refused = await preExecute(installExec(dir), { surfaces, installBudgetMs: 5 });
+  assert.equal(refused?.kind, 'deny');
+  assert.equal(refused.info.rule, 'uninspected');
+  assert.match(refused.reason, /未完成|未检查/);
+  assert.doesNotMatch(refused.reason, /语法不合法/);
+  assert.equal(lastPreflightStatus().unchecked, 20);
 });

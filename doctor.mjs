@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { readIncidents, readState, writeState } from './core.mjs';
+import { paths, readIncidents, readState, writeState } from './core.mjs';
 
 const CULPRIT_TYPES = new Set(['plugin', 'package']);
 const PATCH_FILE = 'cordis.patch.yml';
@@ -269,10 +269,23 @@ export function restorePatchEntries(currentText, backupText, name) {
 
 /* ---------------------------------------------------------------- doctor */
 
-function candidates(incidents, state) {
-  const quarantined = new Set((state.quarantine || []).map((entry) => String(entry?.name ?? '')).filter(Boolean));
+/* Quarantine records are per profile: disabling `foo` in `desktop` says nothing about `work`. Records
+ * written by older builds carry no profile and stay applicable everywhere. */
+function sameProfile(entry, profile) {
+  const owner = String(entry?.profile ?? '').trim();
+  return !owner || !profile || owner === profile;
+}
+
+function candidates(incidents, state, profile) {
+  const quarantined = new Set(
+    (state.quarantine || [])
+      .filter((entry) => sameProfile(entry, profile))
+      .map((entry) => String(entry?.name ?? ''))
+      .filter(Boolean),
+  );
   return incidents
     .filter((incident) => incident && incident.culprit && CULPRIT_TYPES.has(incident.culprit.type) && String(incident.culprit.name ?? '').trim())
+    .filter((incident) => !incident.profile || !profile || incident.profile === profile)
     .filter((incident) => !quarantined.has(incident.culprit.name))
     .sort((a, b) => String(b.ts ?? '').localeCompare(String(a.ts ?? '')));
 }
@@ -287,7 +300,7 @@ export function planDoctor(options = {}) {
   const profileDir = path.resolve(options.profileDir || defaultProfileDir());
   const incidents = readIncidents(home);
   const state = readState(home);
-  const ordered = candidates(incidents, state);
+  const ordered = candidates(incidents, state, path.basename(profileDir));
   if (!ordered.length) {
     return { ok: true, action: 'none', changed: false, home, profileDir, incident: null, plan: null, reason: 'no_candidate', message: '没有待隔离的插件/包崩溃（或都已隔离过）' };
   }
@@ -331,6 +344,7 @@ export function planDoctor(options = {}) {
   if (patch && patch.changed) backups.push(backupPath(culprit.patchFile, at));
   const entry = {
     name,
+    profile: path.basename(profileDir),
     reason: clip(`${incident.kind ?? 'crash'} · ${incident.signature ?? incident.message ?? ''}`, 160),
     at: new Date().toISOString(),
     incidentId: incident.id,
@@ -399,15 +413,16 @@ export function autoEligible(home, name, options = {}) {
   for (const incident of readIncidents(home)) {
     if (String(incident?.culprit?.name ?? '') !== String(name ?? '')) continue;
     /* Count real events, not the lifetime aggregate: 100 old crashes plus one fresh one is not a loop. */
-    /* Legacy rows have no per-event list: assume their `count` events happened at lastTs. */
+    /* Legacy rows carry no per-event list: their `count` says "happened N times some time ago", which
+     * proves nothing about the window. Only the last known timestamp may count, and only once. */
     const fallback = incident?.lastTs || incident?.ts || '';
-    const times = Array.isArray(incident?.occurrenceTimes) && incident.occurrenceTimes.length
-      ? incident.occurrenceTimes
-      : Array.from({ length: Math.max(1, Number(incident?.count) || 1) }, () => fallback);
+    const hasTimes = Array.isArray(incident?.occurrenceTimes) && incident.occurrenceTimes.length > 0;
+    const times = hasTimes ? incident.occurrenceTimes : [];
     hits += Math.max(times.length, Number(incident?.count) || 1);
     for (const time of times) {
       if ((Date.parse(time) || 0) >= cutoff) recent += 1;
     }
+    if (!hasTimes && (Date.parse(fallback) || 0) >= cutoff) recent += 1;
   }
   const ok = recent >= minHits;
   return {
@@ -460,11 +475,12 @@ export function runDoctor(options = {}) {
   const at = stamp();
   const written = [];
   const originals = new Map();
-  /* Track only files we actually overwrote: a file whose write threw still holds its old bytes. */
+  /* Write-ahead: remember the old bytes before touching the file, so a write that throws halfway
+   * can still be put back instead of leaving a truncated file behind. */
   const writeFile = (file, text) => {
     const before = fs.readFileSync(file, 'utf8');
-    fs.writeFileSync(file, text);
     originals.set(file, before);
+    fs.writeFileSync(file, text);
   };
   try {
     // 1) 备份（先备份，再动手）
@@ -486,8 +502,11 @@ export function runDoctor(options = {}) {
     if (planned.patch && planned.patch.changed) {
       writeFile(planned.culprit.patchFile, planned.patch.text);
     }
-    // 4) 隔离记录
+    // 4) 隔离记录（写状态失败必须能回滚：文件已改但记录没落盘，restore 就找不到它了）
     const state = readState(planned.home);
+    const stateFile = paths(planned.home).state;
+    const stateBefore = fs.existsSync(stateFile) ? fs.readFileSync(stateFile, 'utf8') : null;
+    originals.set(stateFile, stateBefore);
     const quarantine = Array.isArray(state.quarantine) ? state.quarantine : [];
     quarantine.push(planned.quarantineEntry);
     writeState({ ...state, quarantine }, planned.home);
@@ -508,24 +527,41 @@ export function runDoctor(options = {}) {
     const rolledBack = [];
     for (const [file, text] of originals) {
       try {
-        fs.writeFileSync(file, text);
+        if (text == null) fs.rmSync(file, { force: true });
+        else fs.writeFileSync(file, text);
         rolledBack.push(file);
       } catch {
         /* keep going: report what still needs a human */
       }
     }
-    const failed = [...originals.keys()].filter((file) => !rolledBack.includes(file));
+    /* Report the disk as it actually is: a rollback attempt that threw does not mean the file was
+     * left modified, so compare bytes instead of trusting the attempt. */
+    const failed = [...originals].filter(([file, text]) => {
+      try {
+        return fs.readFileSync(file, 'utf8') !== text;
+      } catch {
+        return text != null;
+      }
+    }).map(([file]) => file);
     const kept = plan.backups.filter((backup) => fs.existsSync(backup));
+    const changed = failed.length > 0;
     const tail = failed.length
-      ? `；未能回滚：${failed.join('、')}（可用 ${kept.join('、') || '备份'} 手动恢复）`
+      ? `；profile 仍是改了一半的状态：${failed.join('、')} 未回滚`
       : `；已回滚 ${rolledBack.length} 个文件，profile 保持原样`;
+    const next = failed.length
+      ? `；手动恢复用：${kept.length ? kept.join('、') : '（本次没有留下备份）'}`
+      : kept.length
+        ? `；备份保留在 ${kept.join('、')}`
+        : '';
     return {
       ok: false,
       action: 'failed',
-      changed: false,
-      rolledBack: rolledBack.length > 0 && !failed.length,
+      changed,
+      rolledBack: failed.length === 0,
+      remaining: failed,
+      backups: kept,
       reason: 'write_failed',
-      message: `写入失败：${error?.message || error}${tail}`,
+      message: `写入失败：${error?.message || error}${tail}${next}`,
       plan,
       lines,
       written,
@@ -596,11 +632,13 @@ export function restore(name, options = {}) {
     if (options.dryRun === true) {
       return { ok: true, action: 'dry-run', changed: false, dryRun: true, name: target, plan: { name: target, patchOnly: true, patchRestored: patchOnly.restored, backup: patchOnly.backup }, lines: [`将从 ${patchOnly.backup} 恢复 cordis.patch.yml 中 ${target} 的 ${patchOnly.restored} 个条目`] };
     }
+    const patchBefore = readText(patchFile);
     try {
       fs.writeFileSync(patchFile, patchOnly.text);
       const state = readState(home);
       const quarantine = Array.isArray(state.quarantine) ? state.quarantine : [];
-      writeState({ ...state, quarantine: quarantine.filter((entry) => String(entry?.name ?? '') !== target) }, home);
+      const profile = path.basename(profileDir);
+      writeState({ ...state, quarantine: quarantine.filter((entry) => String(entry?.name ?? '') !== target || !sameProfile(entry, profile)) }, home);
       return {
         ok: true,
         action: 'restored',
@@ -613,7 +651,26 @@ export function restore(name, options = {}) {
         lines: [`- patch：${patchOnly.restored} 个条目已恢复`, patchOnly.backup],
       };
     } catch (error) {
-      return { ok: false, action: 'failed', changed: false, reason: 'write_failed', message: `恢复失败：${error?.message || error}` };
+      let putBack = false;
+      if (patchBefore != null) {
+        try {
+          fs.writeFileSync(patchFile, patchBefore);
+          putBack = true;
+        } catch {
+          /* fall through: report the disk state as it is */
+        }
+      }
+      const tail = putBack ? '；cordis.patch.yml 已恢复原样' : `；cordis.patch.yml 可能已被改动，原内容可用 ${patchOnly.backup} 手动恢复`;
+      return {
+        ok: false,
+        action: 'failed',
+        changed: !putBack,
+        rolledBack: putBack,
+        remaining: putBack ? [] : [patchFile],
+        backups: [patchOnly.backup],
+        reason: 'write_failed',
+        message: `恢复失败：${error?.message || error}${tail}`,
+      };
     }
   }
 
@@ -641,8 +698,8 @@ export function restore(name, options = {}) {
   const originals = new Map();
   const writeFile = (file, text) => {
     const before = fs.readFileSync(file, 'utf8');
-    fs.writeFileSync(file, text);
     originals.set(file, before);
+    fs.writeFileSync(file, text);
   };
   try {
     const backupDeps = source.pkg.dependencies && typeof source.pkg.dependencies === 'object' ? source.pkg.dependencies : {};
@@ -664,7 +721,10 @@ export function restore(name, options = {}) {
     if (patchResult.ok && patchResult.changed) writeFile(patchFile, patchResult.text);
     const state = readState(home);
     const quarantine = Array.isArray(state.quarantine) ? state.quarantine : [];
-    const removed = quarantine.filter((entry) => String(entry?.name ?? '') === target || String(entry?.name ?? '') === source.key);
+    const profile = path.basename(profileDir);
+    const removed = quarantine.filter(
+      (entry) => (String(entry?.name ?? '') === target || String(entry?.name ?? '') === source.key) && sameProfile(entry, profile),
+    );
     writeState({ ...state, quarantine: quarantine.filter((entry) => !removed.includes(entry)) }, home);
     return {
       ok: true,
@@ -676,16 +736,35 @@ export function restore(name, options = {}) {
       lines: [`- 依赖：dependencies["${source.key}"] = ${source.spec}`, ...(bundleKeys.length ? [`- bundles：${bundleKeys.join(', ')}`] : []), path.dirname(source.backup)],
     };
   } catch (error) {
-    const failed = [];
     for (const [file, text] of originals) {
       try {
         fs.writeFileSync(file, text);
       } catch {
-        failed.push(file);
+        /* byte comparison below decides whether the disk is actually dirty */
       }
     }
-    const tail = failed.length ? `；未能回滚：${failed.join('、')}` : '；已回滚改动';
-    return { ok: false, action: 'failed', changed: false, reason: 'write_failed', message: `恢复失败：${error?.message || error}${tail}`, plan };
+    const failed = [...originals].filter(([file, text]) => {
+      try {
+        return fs.readFileSync(file, 'utf8') !== text;
+      } catch {
+        return true;
+      }
+    }).map(([file]) => file);
+    const tail = failed.length
+      ? `；profile 仍是改了一半的状态：${failed.join('、')} 未回滚`
+      : '；已回滚改动';
+    const next = failed.length ? `；手动恢复用：${source.backup}` : '';
+    return {
+      ok: false,
+      action: 'failed',
+      changed: failed.length > 0,
+      rolledBack: failed.length === 0,
+      remaining: failed,
+      backups: [source.backup],
+      reason: 'write_failed',
+      message: `恢复失败：${error?.message || error}${tail}${next}`,
+      plan,
+    };
   }
 }
 

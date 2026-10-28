@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 export function storeDir(home = DEFAULT_HOME) {
@@ -619,6 +619,47 @@ export function rankRules(rules) {
 const OCCURRENCE_CAP = 100;
 
 /** Identity of one real crash event: same artifact + timestamp = the same event, never counted twice. */
+const OCCURRENCE_BLOOM_BITS = 2048;
+const OCCURRENCE_BLOOM_HASHES = 3;
+
+function bloomHash(id, seed) {
+  let hash = 2166136261 ^ seed;
+  for (let at = 0; at < id.length; at += 1) {
+    hash ^= id.charCodeAt(at);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % OCCURRENCE_BLOOM_BITS;
+}
+
+/** Compact, bounded memory of every event id already counted for a row: identity lists are capped
+ * for display, but a force rescan must not mistake an evicted id for a new event. */
+function bloomFrom(ids = [], offset = 0) {
+  const bits = new Uint8Array(OCCURRENCE_BLOOM_BITS / 8);
+  for (const id of ids) bloomAdd(bits, String(id), offset);
+  return Buffer.from(bits).toString('base64');
+}
+
+function bloomBits(encoded) {
+  if (typeof encoded !== 'string' || !encoded) return null;
+  const buffer = Buffer.from(encoded, 'base64');
+  return buffer.length === OCCURRENCE_BLOOM_BITS / 8 ? new Uint8Array(buffer) : null;
+}
+
+function bloomAdd(bits, id, offset = 0) {
+  for (let seed = 0; seed < OCCURRENCE_BLOOM_HASHES; seed += 1) {
+    const at = bloomHash(id, seed + offset * 0x9e3779b9);
+    bits[at >> 3] |= 1 << (at & 7);
+  }
+}
+
+function bloomHas(bits, id, offset = 0) {
+  for (let seed = 0; seed < OCCURRENCE_BLOOM_HASHES; seed += 1) {
+    const at = bloomHash(id, seed + offset * 0x9e3779b9);
+    if ((bits[at >> 3] & (1 << (at & 7))) === 0) return false;
+  }
+  return true;
+}
+
 export function occurrenceId(incident) {
   return shortHash(`${incident.fingerprint}|${incident.artifact}|${incident.ts}`);
 }
@@ -627,15 +668,37 @@ export function occurrenceId(incident) {
 export function normalizeOccurrence(incident) {
   const ts = incident.lastTs || incident.ts || new Date(0).toISOString();
   const count = Math.max(1, Number(incident.count) || 1);
-  const occurrenceIds = Array.isArray(incident.occurrenceIds) && incident.occurrenceIds.length
+  const realIds = Array.isArray(incident.occurrenceIds) && incident.occurrenceIds.length;
+  const occurrenceIds = realIds
     ? incident.occurrenceIds.slice(-OCCURRENCE_CAP)
     /* Legacy aggregate rows carry no per-event list: synthesize `count` anonymous events so a
-     * migrated row keeps meaning "happened count times" instead of collapsing to one. */
-    : Array.from({ length: Math.min(count, OCCURRENCE_CAP) }, (_, at) => shortHash(`${incident.fingerprint}|${incident.artifact}|${ts}|legacy|${at}`));
+     * migrated row keeps meaning "happened count times" instead of collapsing to one. The `legacy:`
+     * prefix marks them as synthesized, so a later parse of the real artifact can replace them
+     * instead of stacking real events on top of fabricated ones. */
+    : Array.from({ length: Math.min(count, OCCURRENCE_CAP) }, (_, at) => `legacy:${shortHash(`${incident.fingerprint}|${incident.artifact}|${ts}|legacy|${at}`)}`);
   const occurrenceTimes = Array.isArray(incident.occurrenceTimes) && incident.occurrenceTimes.length
     ? incident.occurrenceTimes.slice(-OCCURRENCE_CAP)
     : Array.from({ length: Math.min(count, OCCURRENCE_CAP) }, () => ts);
-  return { ...incident, occurrenceIds, occurrenceTimes, count, lastTs: occurrenceTimes[occurrenceTimes.length - 1] };
+  /* Synthesized occurrences (no ids at all, `legacy:` ids, or rows migrated by an older build that
+   * repeated one timestamp `count` times) are placeholders, never evidence. Only a real artifact
+   * parse may turn them into counted events. */
+  const synthesized = !realIds
+    || occurrenceIds.every((id) => String(id).startsWith('legacy:'))
+    || (count > 1 && new Set(occurrenceTimes).size === 1);
+  /* A row without a per-event list can never be real, whatever flag it carries: an older build may
+   * have written `occurrenceSynthetic: false` next to stripped ids. */
+  const occurrenceSynthetic = !realIds ? true : Boolean(incident.occurrenceSynthetic ?? synthesized);
+  /* Bounded memory of every counted event id (see bloomFrom): rebuilt from the visible ids when absent. */
+  const storedSeen = bloomBits(incident.occurrenceSeen);
+  const occurrenceSeen = storedSeen ? incident.occurrenceSeen : realIds ? bloomFrom(occurrenceIds) : null;
+  /* A second, independently seeded filter of the same ids. Membership needs both to agree, so one
+   * bit collision can no longer mark a brand-new event as "already counted": `count` stays exact
+   * while memory stays bounded. Rows written before 0.2.1 have only one filter; the second one is
+   * seeded from the visible ids, so evicted ids counted by an older build are the only ones that may
+   * be re-counted once after the upgrade. */
+  const storedSeen2 = bloomBits(incident.occurrenceSeen2);
+  const occurrenceSeen2 = storedSeen2 ? incident.occurrenceSeen2 : realIds ? bloomFrom(occurrenceIds, 1) : null;
+  return { ...incident, occurrenceIds, occurrenceTimes, count, lastTs: occurrenceTimes[occurrenceTimes.length - 1], occurrenceSynthetic, occurrenceSeen, occurrenceSeen2 };
 }
 
 export function scan(options = {}) {
@@ -649,6 +712,35 @@ export function scan(options = {}) {
   const added = [];
   const unknown = [];
   const bumped = new Map();
+  const observed = new Map();
+  /* Live bitset per fingerprint: the visible id list is capped, so membership must come from the
+   * bloom (which remembers evicted ids) instead of the list, or a force rescan re-adds the whole
+   * bucket and inflates `count`. */
+  const seenBits = new Map();
+  const bitsFor = (fingerprint, seen) => {
+    let pair = seenBits.get(fingerprint);
+    if (!pair) {
+      const a = bloomBits(seen?.occurrenceSeen) ?? new Uint8Array(OCCURRENCE_BLOOM_BITS / 8);
+      const b = bloomBits(seen?.occurrenceSeen2) ?? new Uint8Array(OCCURRENCE_BLOOM_BITS / 8);
+      /* Older rows: seed both filters with the ids they still carry. */
+      for (const id of seen?.occurrenceIds ?? []) {
+        bloomAdd(a, String(id));
+        bloomAdd(b, String(id), 1);
+      }
+      pair = { a, b };
+      seenBits.set(fingerprint, pair);
+    }
+    return pair;
+  };
+  const hasSeen = (pair, id) => bloomHas(pair.a, id) && bloomHas(pair.b, id, 1);
+  const addSeen = (pair, id) => {
+    bloomAdd(pair.a, id);
+    bloomAdd(pair.b, id, 1);
+  };
+  const syncSeen = (seen, pair) => {
+    seen.occurrenceSeen = Buffer.from(pair.a).toString('base64');
+    seen.occurrenceSeen2 = Buffer.from(pair.b).toString('base64');
+  };
   let harvested = 0;
 
   for (const artifact of artifacts) {
@@ -659,10 +751,18 @@ export function scan(options = {}) {
     state.scanned[artifact.path] = artifact.mtimeMs;
     for (const incident of parsed) {
       if (known.has(incident.fingerprint)) {
-        /* Same crash shape again: a new event counts, re-parsing the same artifact does not. */
+        /* Same crash shape again: a new event counts, re-parsing the same artifact does not. Collect
+         * the real per-event identity first; merging happens once per fingerprint after this artifact
+         * loop, so a synthetic legacy count can be replaced instead of incremented. */
         const seen = known.get(incident.fingerprint);
         const id = occurrenceId(incident);
-        if (!seen.occurrenceIds.includes(id)) {
+        const bucket = observed.get(incident.fingerprint) ?? new Map();
+        bucket.set(id, incident.ts);
+        observed.set(incident.fingerprint, bucket);
+        const bits = bitsFor(incident.fingerprint, seen);
+        if (!seen.occurrenceSynthetic && !hasSeen(bits, id)) {
+          addSeen(bits, id);
+          syncSeen(seen, bits);
           seen.occurrenceIds = [...seen.occurrenceIds, id].slice(-OCCURRENCE_CAP);
           seen.occurrenceTimes = [...seen.occurrenceTimes, incident.ts].sort().slice(-OCCURRENCE_CAP);
           seen.lastTs = seen.occurrenceTimes[seen.occurrenceTimes.length - 1];
@@ -686,14 +786,53 @@ export function scan(options = {}) {
     }
   }
 
+  /* One merge per fingerprint: a row whose occurrences were synthesized (legacy migration) is
+   * replaced by the real events just observed, so a force rescan can only ever converge. Rows that
+   * already hold real events gain the newly observed ones. */
+  for (const [fingerprint, bucket] of observed) {
+    const seen = known.get(fingerprint);
+    if (!seen) continue;
+    const entries = [...bucket].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+    if (seen.occurrenceSynthetic) {
+      const before = JSON.stringify(seen.occurrenceIds);
+      const ids = entries.map(([id]) => id);
+      const times = entries.map(([, ts]) => ts);
+      seen.occurrenceIds = ids.slice(-OCCURRENCE_CAP);
+      seen.occurrenceTimes = times.slice(-OCCURRENCE_CAP);
+      seen.count = seen.occurrenceIds.length;
+      seen.lastTs = seen.occurrenceTimes[seen.occurrenceTimes.length - 1];
+      seen.occurrenceSynthetic = false;
+      const a = Uint8Array.from(Buffer.from(bloomFrom(seen.occurrenceIds), 'base64'));
+      const b = Uint8Array.from(Buffer.from(bloomFrom(seen.occurrenceIds, 1), 'base64'));
+      seen.occurrenceSeen = Buffer.from(a).toString('base64');
+      seen.occurrenceSeen2 = Buffer.from(b).toString('base64');
+      seenBits.set(fingerprint, { a, b });
+      if (seen.id && JSON.stringify(seen.occurrenceIds) !== before) bumped.set(seen.id, (bumped.get(seen.id) ?? 0) + 1);
+      continue;
+    }
+    const bits = bitsFor(fingerprint, seen);
+    for (const [id, ts] of entries) {
+      if (hasSeen(bits, id)) continue;
+      addSeen(bits, id);
+      syncSeen(seen, bits);
+      seen.occurrenceIds = [...seen.occurrenceIds, id].slice(-OCCURRENCE_CAP);
+      seen.occurrenceTimes = [...seen.occurrenceTimes, ts].sort().slice(-OCCURRENCE_CAP);
+      seen.lastTs = seen.occurrenceTimes[seen.occurrenceTimes.length - 1];
+      seen.count = Math.max((seen.count ?? 1) + 1, seen.occurrenceIds.length);
+      if (seen.id) bumped.set(seen.id, (bumped.get(seen.id) ?? 0) + 1);
+    }
+  }
+
   if (added.length) writeRules(rules, home);
   const migrated = stored.some((incident, at) => JSON.stringify(incident) !== JSON.stringify(rawStored[at] ?? {}));
   if (bumped.size || migrated) {
     /* Persist the bumped aggregate (count, lastTs, per-event identity). */
     const fresh = readIncidents(home).map(normalizeOccurrence);
     const byId = new Map(fresh.map((incident) => [incident.id, incident]));
-    for (const incident of stored) {
-      if (!bumped.has(incident.id)) continue;
+    /* Mutated rows may be freshly added in this run (not yet reflected in the file read above) or
+     * already-stored rows; `known` holds the live object for both, so persist from there. */
+    for (const incident of known.values()) {
+      if (!incident?.id || !bumped.has(incident.id)) continue;
       byId.set(incident.id, incident);
     }
     rewriteIncidents([...byId.values()], home);

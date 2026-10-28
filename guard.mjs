@@ -295,21 +295,159 @@ function stripNoise(text) {
   return out.join('');
 }
 
-function syntaxFindings(root, relFiles) {
+/**
+ * One child checks every candidate file at once: `node --check` per file costs ~22 ms of
+ * process spawn each, which dominates preflight on a profile with 20 entries. The child
+ * parses each file with vm.SourceTextModule (ESM) or vm.Script (CJS); nothing is executed.
+ * Results are cached by (path, mtimeMs, size) so a repeated preflight is free.
+ */
+const SYNTAX_CACHE = new Map();
+const SYNTAX_CACHE_MAX = 512;
+const SYNTAX_HELPER = String.raw`
+const vm = require('node:vm');
+const fs = require('node:fs');
+const path = require('node:path');
+const files = JSON.parse(fs.readFileSync(0, 'utf8'));
+const isEsm = (file) => {
+  if (/\.m[jt]s$/.test(file)) return true;
+  if (/\.c[jt]s$/.test(file)) return false;
+  let dir = path.dirname(file);
+  for (let i = 0; i < 8; i += 1) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      return pkg && pkg.type === 'module';
+    } catch {}
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return false;
+};
+const out = [];
+for (const item of files) {
+  const file = typeof item === 'string' ? item : item.file;
+  let error = null;
+  try {
+    const raw = typeof item === 'string' ? fs.readFileSync(file, 'utf8') : item.text;
+    /* node --check ignores a shebang; the vm parsers do not */
+    const text = raw.charCodeAt(0) === 35 && raw.charCodeAt(1) === 33 ? raw.replace(/^#![^\n]*/, '') : raw;
+    if (isEsm(file)) new vm.SourceTextModule(text, { identifier: file });
+    else new vm.Script(text, { filename: file });
+  } catch (caught) {
+    error = caught;
+  }
+  if (!error) { out.push({ file, ok: true }); continue; }
+  /* a parse error's vm stack points at node internals, not the source line */
+  out.push({ file, ok: false, message: String(error && error.message || error), line: 0 });
+}
+process.stdout.write(JSON.stringify(out));
+`;
+/** state of the last syntax sweep; the runtime reads it so it never claims a check it did not finish */
+let syntaxStatus = { checked: 0, cached: 0, unchecked: 0, budgetHit: false };
+
+export function lastSyntaxStatus() {
+  return { ...syntaxStatus };
+}
+
+/**
+ * Syntax-check one in-memory file without writing it to disk (the write guard's P013).
+ * Returns `{ message, line }` for a broken file and null for a legal one; fails open.
+ */
+export function syntaxErrorFor(file, text) {
+  try {
+    const child = spawnSync(process.execPath, ['--experimental-vm-modules', '--no-warnings', '-e', SYNTAX_HELPER], {
+      input: JSON.stringify([{ file: String(file), text: String(text) }]),
+      encoding: 'utf8',
+      timeout: 2000,
+      maxBuffer: 1024 * 1024,
+    });
+    const parsed = JSON.parse(String(child.stdout || '[]'));
+    const result = Array.isArray(parsed) ? parsed[0] : null;
+    if (!result || result.ok) return null;
+    /* the vm error stack carries no source line for parse errors; omitting it beats a wrong one */
+    return { message: String(result.message || '语法检查失败'), line: 0 };
+  } catch {
+    return null;
+  }
+}
+
+function syntaxFindings(root, relFiles, options = {}) {
   const findings = [];
+  const budgetMs = Number.isFinite(options.budgetMs) ? options.budgetMs : 0;
+  const started = Date.now();
+  const pending = [];
+  const seen = new Set();
   for (const rel of relFiles) {
     const file = path.join(root, rel);
-    const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 8000 });
-    if (result.status === 0) continue;
-    const stderr = String(result.stderr || result.error?.message || 'node --check 失败');
-    const lineMatch = /:(\d+)\n/.exec(stderr);
-    findings.push(finding('boot', 'P013', '文件语法不合法（装上去必然激活失败）', rel, lineMatch ? Number(lineMatch[1]) : 0, stderr.split('\n').find((line) => /error/i.test(line))?.trim() || stderr.split('\n')[0], '先 node --check 修好语法'));
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let stat = null;
+    try { stat = fs.statSync(file); } catch { continue; }
+    const key = `${file}|${stat.mtimeMs}|${stat.size}`;
+    const cached = SYNTAX_CACHE.get(key);
+    if (cached === null) continue;
+    if (cached) { findings.push({ ...cached }); continue; }
+    pending.push({ file, rel, key });
   }
+
+  const unchecked = [];
+  if (pending.length) {
+    const remaining = budgetMs ? budgetMs - (Date.now() - started) : 0;
+    if (budgetMs && remaining <= 10) {
+      for (const item of pending) unchecked.push(item.rel);
+    } else {
+      const child = spawnSync(process.execPath, ['--experimental-vm-modules', '--no-warnings', '-e', SYNTAX_HELPER], {
+        input: JSON.stringify(pending.map((item) => item.file)),
+        encoding: 'utf8',
+        timeout: budgetMs ? Math.min(2000, remaining) : 8000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      let parsed = null;
+      try { parsed = JSON.parse(String(child.stdout || '')); } catch { parsed = null; }
+      if (!Array.isArray(parsed)) {
+        for (const item of pending) unchecked.push(item.rel);
+      } else {
+        const byFile = new Map(parsed.map((entry) => [entry.file, entry]));
+        for (const item of pending) {
+          const result = byFile.get(item.file);
+          if (!result) { unchecked.push(item.rel); continue; }
+          if (result.ok) {
+            SYNTAX_CACHE.delete(item.key);
+            SYNTAX_CACHE.set(item.key, null);
+            if (SYNTAX_CACHE.size > SYNTAX_CACHE_MAX) SYNTAX_CACHE.delete(SYNTAX_CACHE.keys().next().value);
+            continue;
+          }
+          /* vm gives no source line for a parse error; one --check on the broken file gives it */
+          let line = Number(result.line) || 0;
+          let message = String(result.message || '语法检查失败').split('\n')[0];
+          if (!line) {
+            const exact = spawnSync(process.execPath, ['--check', item.file], { encoding: 'utf8', timeout: 2000 });
+            const stderr = String(exact.stderr || '');
+            const lineMatch = /:(\d+)\n/.exec(stderr);
+            if (lineMatch) line = Number(lineMatch[1]);
+            const better = stderr.split('\n').find((text) => /error/i.test(text))?.trim();
+            if (better) message = better;
+          }
+          const finding_ = finding('boot', 'P013', '文件语法不合法（装上去必然激活失败）', item.rel, line, message, '先修好语法再写进 live 插件');
+          SYNTAX_CACHE.set(item.key, finding_);
+          if (SYNTAX_CACHE.size > SYNTAX_CACHE_MAX) SYNTAX_CACHE.delete(SYNTAX_CACHE.keys().next().value);
+          findings.push({ ...finding_ });
+        }
+      }
+    }
+  }
+
+  syntaxStatus = {
+    checked: pending.length - unchecked.length,
+    cached: relFiles.length - pending.length,
+    unchecked: unchecked.length,
+    budgetHit: unchecked.length > 0 || (budgetMs > 0 && Date.now() - started > budgetMs),
+  };
   return findings;
 }
 
 /** package.json / cordis.patch.yml / entry wiring, checked the way the loader checks it. */
-export function preflight(dir) {
+export function preflight(dir, options = {}) {
   const root = path.resolve(dir);
   const findings = [];
   const pkgFile = path.join(root, 'package.json');
@@ -384,7 +522,7 @@ export function preflight(dir) {
     .map((file) => path.relative(root, file))
     .filter((rel) => /(?:^|[\/\\])(?:index|main|client|server|plugin)\.(?:mjs|cjs|js|ts)$/.test(rel) || exportEntries.some(([, target]) => path.normalize(target).replace(/^\.\//, '') === rel))
     .slice(0, 20);
-  findings.push(...syntaxFindings(root, entryFiles));
+  findings.push(...syntaxFindings(root, entryFiles, options));
 
   const toolNames = new Map();
   for (const file of files) {

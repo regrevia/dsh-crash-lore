@@ -16,7 +16,8 @@ function tmpHome() {
 
 function sandbox({ profile = 'profile', home = 'home' } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-doctor-'));
-  const profileDir = path.join(dir, 'profile');
+  /* 与真实布局一致：…/profiles/<名字>。隔离记录按 profile 名归属，目录名必须能对上事故里的 profile。 */
+  const profileDir = path.join(dir, 'profiles', 'desktop');
   const homeDir = path.join(dir, 'home');
   fs.cpSync(path.join(FIXTURES, profile), profileDir, { recursive: true });
   fs.cpSync(path.join(FIXTURES, home), homeDir, { recursive: true });
@@ -29,6 +30,10 @@ function read(file) {
 
 function readJson(file) {
   return JSON.parse(read(file));
+}
+
+function writeJson(file, value) {
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function snapshot(root) {
@@ -238,12 +243,24 @@ test('analyzePatch 只扫条目，注释后其余结构完好', () => {
 test('autoEligible only fires on a crash loop', () => {
   const home = tmpHome();
   const now = new Date().toISOString();
-  appendIncident({ id: 'inc_a', kind: 'uncaught-exception', ts: now, lastTs: now, count: 3, culprit: { name: 'p-loop' }, fingerprint: 'f1' }, home);
-  appendIncident({ id: 'inc_b', kind: 'uncaught-exception', ts: now, lastTs: now, count: 1, culprit: { name: 'p-once' }, fingerprint: 'f2' }, home);
+  /* Real per-event identity: three timestamped occurrences inside the window. */
+  appendIncident({ id: 'inc_a', kind: 'uncaught-exception', ts: now, lastTs: now, count: 3, occurrenceIds: ['o1', 'o2', 'o3'], occurrenceTimes: [now, now, now], culprit: { name: 'p-loop' }, fingerprint: 'f1' }, home);
+  appendIncident({ id: 'inc_b', kind: 'uncaught-exception', ts: now, lastTs: now, count: 1, occurrenceIds: ['o4'], occurrenceTimes: [now], culprit: { name: 'p-once' }, fingerprint: 'f2' }, home);
   assert.equal(autoEligible(home, 'p-loop').ok, true);
   assert.equal(autoEligible(home, 'p-once').ok, false);
   assert.equal(autoEligible(home, 'p-once', { minHits: 1 }).ok, true);
   assert.equal(autoEligible(home, 'p-unknown').ok, false);
+});
+
+test('autoEligible：没有逐次时间的旧累计条目，不能凭 count 伪造 24h 崩溃循环', () => {
+  const home = tmpHome();
+  const now = new Date().toISOString();
+  /* Legacy aggregate: count 100, last crash today, but nothing proves the other 99 were recent. */
+  appendIncident({ id: 'inc_legacy', kind: 'uncaught-exception', ts: '2025-01-01T00:00:00.000Z', lastTs: now, count: 100, culprit: { name: 'p-legacy' }, fingerprint: 'fl' }, home);
+  const verdict = autoEligible(home, 'p-legacy');
+  assert.equal(verdict.recent, 1, '窗口内只算最后一次已知事件，不能把累计次数当窗口内次数');
+  assert.equal(verdict.ok, false, '累计 100 次不等于 24h 内崩了 100 次');
+  assert.equal(verdict.hits, 100, '生命周期总数仍保留，只是不用于窗口判定');
 });
 
 test('restore：只注释过 patch 的隔离也能撤销（patch-only，不要求 package.json 备份）', () => {
@@ -275,6 +292,22 @@ test('写入中途失败：已改的文件回滚，profile 不留半套状态', 
   assert.equal(read(path.join(box.profileDir, 'package.json')), pkgBefore, 'package.json 必须回到原样');
   assert.equal(read(path.join(box.profileDir, 'cordis.patch.yml')), patchBefore);
   assert.equal((readJson(path.join(box.homeDir, 'crash-lore', 'state.json')).quarantine || []).length, 0, '失败时不写隔离记录');
+});
+
+test('隔离记录按 profile 归属：别的 profile 隔离过同一个插件，不影响这里摘它', () => {
+  const box = sandbox();
+  /* 同样的真凶，在 work profile 被隔离过；desktop 的 state 不该因此跳过。 */
+  const stateFile = path.join(box.homeDir, 'crash-lore', 'state.json');
+  const state = readJson(stateFile);
+  writeJson(stateFile, { ...state, quarantine: [{ name: 'dsh-bad', profile: 'work', at: new Date().toISOString() }] });
+  const planned = runDoctor({ home: box.homeDir, profileDir: box.profileDir });
+  assert.equal(planned.action, 'plan', JSON.stringify(planned));
+
+  /* 本 profile 自己的记录仍然生效：已隔离就不重复摘。 */
+  writeJson(stateFile, { ...state, quarantine: [{ name: 'dsh-bad', profile: 'desktop', at: new Date().toISOString() }] });
+  const again = runDoctor({ home: box.homeDir, profileDir: box.profileDir });
+  assert.equal(again.action, 'none', JSON.stringify(again));
+  assert.equal(again.reason, 'no_candidate');
 });
 
 test('autoEligible：24 小时窗口按真实事件时间算，历史 100 次 + 今天 1 次不算崩溃循环', () => {

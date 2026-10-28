@@ -28,6 +28,7 @@ import {
   compactRules,
 } from './core.mjs';
 import { checkSource, preflight, renderAll } from './guard.mjs';
+import { mergeJudge } from './lib/judge.mjs';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] ?? 'help';
@@ -89,7 +90,7 @@ switch (cmd) {
       process.exitCode = 2;
       break;
     }
-    const findings = [...preflight(dir), ...checkSource(dir, readRules(home))];
+    const findings = mergeJudge(dir, [...preflight(dir), ...checkSource(dir, readRules(home))]);
     print(renderAll(findings, dir));
     if (findings.length) process.exitCode = 1;
     break;
