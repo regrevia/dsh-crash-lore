@@ -424,6 +424,8 @@ PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512
 - 第 7 项性能历史 FAIL（421–533 ms）已保留；A 的批量语法检查落盘后复测 **1.3 ms**（min），第 7 项转 PASS，自动门禁通过。若后续再改 `guard.mjs` 需重跑 c14，不能用本次数字覆盖历史。
 - 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 19/19）与目标解析/保护范围（第 15 项 20/20）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）；三档真实切换（⑤）、20 entry 真实耗时（⑥）、真实 PTC 回传（④）已由第 13/14/12 项在临时真实宿主内补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
 - 本报告所有 mock/进程内证据与真实宿主证据分开标注；真实第二会话、真实 PTC 本轮未取得，来源列保持「无（未取得）」，不冒充 Lead 补证。
+- **运行中增删插件的范围刷新仍未取得真机证据（本轮实测到窗口机制）**：让 fixture 在**存活的宿主进程里**跑 `plugin add` 加第三个插件后，宿主立刻把插件上下文重挂，fixture 的后续 `ctx.tools.execute()` 直接抛 `cannot get required service tools in inactive context`（20/24，失败原因记录在案，未改成 PASS）。这说明真实链路里改 profile 会触发重挂，guard 在该窗口内不工作，范围刷新实际上由重挂后的 re-apply 承担；因此 `markSurfacesDirty` / 2 s 节流刷新这条路径只有进程内 `c-*` 证据，不再声称真机覆盖。静态范围已由第 15 项真机覆盖（profile 里第二个无关插件同拒）。
+
 - **第 3 项对抗用例已闭环**：修复前 20 个 1.5 MB 级 entry、坏语法、150 ms 预算时会 `unchecked:20` 且 ALLOWED（证据 `/tmp/cl-acceptance-adversarial-before.txt`：2 pass / 1 fail、exit 1）；A 改为安装/启用路径 3000 ms + 单次重试 + `uninspected` 硬拒后，同用例 deny P013，5 ms 预算注入 deny `uninspected`（文案不冒充语法错误），20 个大而合法入口 allowed。`adversarial --strict` 现为 6/6、exit 0。写前检查仍是 fail-open，符合「写前不因性能预算误伤」的原口径。
 
 ## 7. 文档自查
