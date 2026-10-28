@@ -7,11 +7,18 @@
     "fix": "回调整体包 try/catch，出错只丢这一次，写完日志继续",
     "guard": null,
     "severity": "fatal",
-    "tags": ["uncaught", "callback", "host"],
+    "tags": [
+      "uncaught",
+      "callback",
+      "host"
+    ],
     "hits": 7,
     "firstSeen": "2026-10-27T12:32:30.129Z",
     "lastSeen": "2026-10-28T09:23:22.876Z",
-    "incidentIds": ["inc_42a251011fd8", "inc_9c8c3f934d27"],
+    "incidentIds": [
+      "inc_42a251011fd8",
+      "inc_9c8c3f934d27"
+    ],
     "memoryId": null
   },
   {
@@ -22,11 +29,16 @@
     "fix": "定时器/定时清理回调单独包一层，异常记录后不重抛",
     "guard": null,
     "severity": "fatal",
-    "tags": ["timer", "uncaught"],
+    "tags": [
+      "timer",
+      "uncaught"
+    ],
     "hits": 2,
     "firstSeen": "2026-10-27T12:32:30.129Z",
     "lastSeen": "2026-10-27T14:11:55.682Z",
-    "incidentIds": ["inc_9c8c3f934d27"],
+    "incidentIds": [
+      "inc_9c8c3f934d27"
+    ],
     "memoryId": null
   },
   {
@@ -37,11 +49,17 @@
     "fix": "逐帧 try/catch，坏帧丢掉并计数，不向外抛",
     "guard": null,
     "severity": "fatal",
-    "tags": ["websocket", "cdp", "uncaught"],
+    "tags": [
+      "websocket",
+      "cdp",
+      "uncaught"
+    ],
     "hits": 5,
     "firstSeen": "2026-10-28T09:15:33.952Z",
     "lastSeen": "2026-10-28T09:23:22.876Z",
-    "incidentIds": ["inc_42a251011fd8"],
+    "incidentIds": [
+      "inc_42a251011fd8"
+    ],
     "memoryId": null
   },
   {
@@ -52,11 +70,16 @@
     "fix": "stop/dispose 内部先判断方法存在，再整体包 try/catch",
     "guard": null,
     "severity": "fatal",
-    "tags": ["cleanup", "lifecycle"],
+    "tags": [
+      "cleanup",
+      "lifecycle"
+    ],
     "hits": 2,
     "firstSeen": "2026-10-27T12:32:30.129Z",
     "lastSeen": "2026-10-27T14:11:55.682Z",
-    "incidentIds": ["inc_9c8c3f934d27"],
+    "incidentIds": [
+      "inc_9c8c3f934d27"
+    ],
     "memoryId": null
   },
   {
@@ -71,7 +94,10 @@
       "message": "插件里不要调用 process.exit：它会直接终止宿主进程"
     },
     "severity": "fatal",
-    "tags": ["lifecycle", "host"],
+    "tags": [
+      "lifecycle",
+      "host"
+    ],
     "hits": 0,
     "firstSeen": null,
     "lastSeen": null,
@@ -86,11 +112,16 @@
     "fix": "报错里的 $ 路径就是字段位置，补值或改 schema 默认值",
     "guard": null,
     "severity": "boot",
-    "tags": ["config", "validation"],
+    "tags": [
+      "config",
+      "validation"
+    ],
     "hits": 1,
     "firstSeen": "2026-10-24T10:32:46.923Z",
     "lastSeen": "2026-10-24T10:32:46.923Z",
-    "incidentIds": ["inc_b922a17703ff"],
+    "incidentIds": [
+      "inc_b922a17703ff"
+    ],
     "memoryId": null
   },
   {
@@ -101,11 +132,16 @@
     "fix": "先修失败表里的提供者，再看等待表，不要调 enable 顺序",
     "guard": null,
     "severity": "boot",
-    "tags": ["service", "startup"],
+    "tags": [
+      "service",
+      "startup"
+    ],
     "hits": 1,
     "firstSeen": "2026-10-24T10:32:46.923Z",
     "lastSeen": "2026-10-24T10:32:46.923Z",
-    "incidentIds": ["inc_b922a17703ff"],
+    "incidentIds": [
+      "inc_b922a17703ff"
+    ],
     "memoryId": null
   },
   {
@@ -116,11 +152,18 @@
     "fix": "视图和面板通过 slot 图注册，inject 只声明真正用到的 service",
     "guard": null,
     "severity": "boot",
-    "tags": ["client", "boot", "slot"],
+    "tags": [
+      "client",
+      "boot",
+      "slot"
+    ],
     "hits": 6,
     "firstSeen": "2026-10-24T10:32:46.923Z",
     "lastSeen": "2026-10-28T09:19:47.843Z",
-    "incidentIds": ["inc_6f3d721bddaf", "inc_b922a17703ff"],
+    "incidentIds": [
+      "inc_6f3d721bddaf",
+      "inc_b922a17703ff"
+    ],
     "memoryId": null
   },
   {
@@ -131,11 +174,17 @@
     "fix": "改完 client.js 先 node --check，再看构建产物是否完整",
     "guard": null,
     "severity": "boot",
-    "tags": ["client", "syntax", "build"],
+    "tags": [
+      "client",
+      "syntax",
+      "build"
+    ],
     "hits": 3,
     "firstSeen": "2026-10-28T09:15:33.952Z",
     "lastSeen": "2026-10-28T09:15:33.952Z",
-    "incidentIds": ["inc_baa187281b4e"],
+    "incidentIds": [
+      "inc_baa187281b4e"
+    ],
     "memoryId": null
   },
   {
@@ -146,7 +195,10 @@
     "fix": "顶层只用 var 或合并声明，构建前查一次重复标识符",
     "guard": null,
     "severity": "boot",
-    "tags": ["client", "esm"],
+    "tags": [
+      "client",
+      "esm"
+    ],
     "hits": 0,
     "firstSeen": null,
     "lastSeen": null,
@@ -165,7 +217,10 @@
       "message": "模块顶层不要 throw/await：请放进 apply() 或 activate()"
     },
     "severity": "boot",
-    "tags": ["esm", "activation"],
+    "tags": [
+      "esm",
+      "activation"
+    ],
     "hits": 0,
     "firstSeen": null,
     "lastSeen": null,
@@ -185,7 +240,10 @@
       "message": "ESM 模块里没有 require，请用 import 或 createRequire"
     },
     "severity": "boot",
-    "tags": ["esm", "import"],
+    "tags": [
+      "esm",
+      "import"
+    ],
     "hits": 0,
     "firstSeen": null,
     "lastSeen": null,
@@ -204,7 +262,10 @@
       "message": "配置里写死了本机绝对路径，换机或换用户就失效"
     },
     "severity": "boot",
-    "tags": ["config", "portability"],
+    "tags": [
+      "config",
+      "portability"
+    ],
     "hits": 0,
     "firstSeen": null,
     "lastSeen": null,
@@ -223,7 +284,10 @@
       "message": "同一个 id 在 patch 里出现了两次，后面的会静默覆盖前面的"
     },
     "severity": "boot",
-    "tags": ["config", "patch"],
+    "tags": [
+      "config",
+      "patch"
+    ],
     "hits": 0,
     "firstSeen": null,
     "lastSeen": null,
@@ -243,7 +307,10 @@
       "message": "配置里出现疑似凭据明文，改用 apiKeyEnv 指向环境变量"
     },
     "severity": "boot",
-    "tags": ["config", "secret"],
+    "tags": [
+      "config",
+      "secret"
+    ],
     "hits": 0,
     "firstSeen": null,
     "lastSeen": null,
@@ -262,7 +329,10 @@
       "message": "profile 声明了核心包依赖，会加载出第二份 runtime"
     },
     "severity": "fatal",
-    "tags": ["dependency", "dual-package"],
+    "tags": [
+      "dependency",
+      "dual-package"
+    ],
     "hits": 1,
     "firstSeen": "2026-08-14T00:00:00.000Z",
     "lastSeen": "2026-08-14T00:00:00.000Z",
@@ -277,7 +347,10 @@
     "fix": "需要拦默认行为就 passive: false，或改在非 passive 容器上处理",
     "guard": null,
     "severity": "lint",
-    "tags": ["renderer", "gesture"],
+    "tags": [
+      "renderer",
+      "gesture"
+    ],
     "hits": 30,
     "firstSeen": "2026-10-28T09:15:33.952Z",
     "lastSeen": "2026-10-28T09:15:33.952Z",
@@ -292,7 +365,10 @@
     "fix": "改动排到 requestAnimationFrame，或在回调里避开自身尺寸",
     "guard": null,
     "severity": "lint",
-    "tags": ["renderer", "layout"],
+    "tags": [
+      "renderer",
+      "layout"
+    ],
     "hits": 1,
     "firstSeen": "2026-10-28T09:15:33.952Z",
     "lastSeen": "2026-10-28T09:15:33.952Z",
@@ -307,7 +383,10 @@
     "fix": "打开前检查引用存活，失败给一行可见原因",
     "guard": null,
     "severity": "lint",
-    "tags": ["session", "ui"],
+    "tags": [
+      "session",
+      "ui"
+    ],
     "hits": 1,
     "firstSeen": "2026-10-28T09:15:33.952Z",
     "lastSeen": "2026-10-28T09:15:33.952Z",
@@ -322,7 +401,10 @@
     "fix": "reload 后校验 revision，不一致就整页刷新而不是复用旧 chunk",
     "guard": null,
     "severity": "lint",
-    "tags": ["reload", "client"],
+    "tags": [
+      "reload",
+      "client"
+    ],
     "hits": 1,
     "firstSeen": "2026-10-28T10:16:38.134Z",
     "lastSeen": "2026-10-28T10:16:38.134Z",
@@ -337,7 +419,10 @@
     "fix": "失败时给一行结论加下一步动作，不要静默或只报错码",
     "guard": null,
     "severity": "lint",
-    "tags": ["ui", "feedback"],
+    "tags": [
+      "ui",
+      "feedback"
+    ],
     "hits": 6,
     "firstSeen": "2026-10-28T04:20:00.000Z",
     "lastSeen": "2026-10-28T04:20:00.000Z",
@@ -352,7 +437,10 @@
     "fix": "移到 sessions-quarantine/日期/ 并保留 lock，再让用户决定",
     "guard": null,
     "severity": "lint",
-    "tags": ["session", "store"],
+    "tags": [
+      "session",
+      "store"
+    ],
     "hits": 2,
     "firstSeen": "2026-10-25T00:00:00.000Z",
     "lastSeen": "2026-10-25T00:00:00.000Z",
@@ -367,10 +455,32 @@
     "fix": "崩溃恢复时补齐 tool 结果占位，别把半条工具链留在历史里",
     "guard": null,
     "severity": "fatal",
-    "tags": ["session", "tool"],
+    "tags": [
+      "session",
+      "tool"
+    ],
     "hits": 1,
     "firstSeen": "2026-08-14T00:00:00.000Z",
     "lastSeen": "2026-08-14T00:00:00.000Z",
+    "incidentIds": [],
+    "memoryId": null
+  },
+  {
+    "id": "R024",
+    "title": "递归必须有终止条件，栈溢出会直接杀宿主",
+    "signature": "Maximum call stack size exceeded",
+    "cause": "插件在 Promise 构造/回调里递归重试或自调用，没有边界条件，栈打满后 PromiseRejectCallback 把宿主带走",
+    "fix": "递归前先判边（次数/深度/状态机），重试放定时器并设上限，Promise 构造里不做递归",
+    "guard": null,
+    "severity": "fatal",
+    "tags": [
+      "recursion",
+      "stack",
+      "host"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-10-28T18:08:20.844Z",
+    "lastSeen": "2026-10-28T18:08:20.844Z",
     "incidentIds": [],
     "memoryId": null
   }

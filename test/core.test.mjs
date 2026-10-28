@@ -68,6 +68,32 @@ const STARTUP_LOG = `WARNING: Raw diagnostics may contain configuration or crede
 }
 `;
 
+const STACK_LOG = `time: 2026-10-28T18:08:20.844Z
+source: host
+phase: running
+app: @deepseek-ai/dsh-desktop 0.2.1-rc.3
+platform: darwin arm64
+node: 24.21.0
+
+--- error ---
+Error: dsh desktop host stopped: Exception in PromiseRejectCallback:
+file:///opt/dev/dsh-mobile-use/scrcpy.js?v=11:1309
+    return new Promise((resolveCommand) => {
+           ^
+
+RangeError: Maximum call stack size exceeded
+
+Exception in PromiseRejectCallback:
+file:///opt/dev/dsh-mobile-use/scrcpy.js?v=12:1309
+    return new Promise((resolveCommand) => {
+           ^
+
+RangeError: Maximum call stack size exceeded
+
+    at ChildProcess.<anonymous> (file:///Applications/DeepSeek Harness.app/Contents/Resources/app.asar/lib/main.js:3845:36)
+    at ChildProcess.wrapper (node:events:639:12)
+`;
+
 function tmpHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-'));
   fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
@@ -96,6 +122,29 @@ test('host crash: kind, signature, culprit, frame', () => {
     assert.equal(incident.culprit.type, 'plugin');
     assert.equal(incident.frame, 'sidecar.js:743');
     assert.match(incident.id, /^inc_[0-9a-f]{12}$/);
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR;
+    else process.env.DSH_PROFILE_DIR = previous;
+  }
+});
+
+test('stack overflow: names the recursing module, not the host stop frame', () => {
+  const home = tmpHome();
+  const profileDir = path.join(home, 'profiles', 'desktop');
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-mobile-use': 'link:/opt/dev/dsh-mobile-use' } }));
+  const previous = process.env.DSH_PROFILE_DIR;
+  process.env.DSH_PROFILE_DIR = profileDir;
+  try {
+    const incident = parseArtifact(writeArtifact(home, 'crash-2026-10-28T18-08-20-844Z-host.log', STACK_LOG));
+    assert.equal(incident.kind, 'stack-overflow');
+    assert.equal(incident.signature, 'stack-overflow · scrcpy.js:1309');
+    assert.equal(incident.frame, 'scrcpy.js:1309');
+    assert.equal(incident.culprit.type, 'plugin');
+    assert.equal(incident.culprit.name, 'dsh-mobile-use');
+    /* ?v= is a cache buster, not part of the shape: the same bug must not fork per reload. */
+    const reloaded = parseArtifact(writeArtifact(home, 'crash-b-host.log', STACK_LOG.replace('?v=11', '?v=12')));
+    assert.equal(reloaded.fingerprint, incident.fingerprint);
   } finally {
     if (previous === undefined) delete process.env.DSH_PROFILE_DIR;
     else process.env.DSH_PROFILE_DIR = previous;

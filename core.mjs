@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.0';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 export function storeDir(home = DEFAULT_HOME) {
@@ -270,6 +270,7 @@ function classifyCrash(errorText, rendererText, source) {
   if (/fatal uncaught exception|uncaughtException/i.test(errorText)) return 'uncaught-exception';
   if (/startup failed/i.test(errorText)) return 'plugin-activation';
   if (/ValidationError: invalid config/i.test(errorText)) return 'config-validation';
+  if (/Maximum call stack size exceeded/i.test(errorText)) return 'stack-overflow';
   if (/web boot:/.test(errorText)) return 'web-boot';
   if (/did not activate/i.test(errorText)) return 'plugin-activation';
   if (/Uncaught SyntaxError/i.test(rendererText) && !errorText.trim()) return 'client-error';
@@ -286,6 +287,9 @@ function parseCrash(file, text) {
   let signature = 'unknown';
   let message = '';
   let culprit = null;
+  /* A stack overflow names its own site: `Exception in PromiseRejectCallback: file:///...:1309`
+   * is the innermost frame, while the `at` list only carries the host's stop path. */
+  let stackFrame = null;
 
   if (kind === 'uncaught-exception') {
     const m = /fatal uncaught exception:\s*([^\n]+)/i.exec(errorText);
@@ -312,12 +316,21 @@ function parseCrash(file, text) {
     const name = /([A-Za-z_$][\w$.]*(?:Error|Exception)):/.exec(errorText)?.[1] ?? 'ValidationError';
     signature = bullet ? `${name} · ${bullet}` : `${name} · invalid config`;
     message = errorText.slice(0, 400);
+  } else if (kind === 'stack-overflow') {
+    const deep = /file:\/\/([^\s:]+):(\d+)/.exec(errorText);
+    /* Cache-busted client modules import as `scrcpy.js?v=12`; the version is not part of the
+     * crash shape, so it must not split one bug into three incidents. */
+    if (deep) stackFrame = { file: deep[1].split('?')[0], line: Number(deep[2]), raw: `file://${deep[1]}:${deep[2]}` };
+    const where = stackFrame ? `${path.basename(stackFrame.file)}:${stackFrame.line}` : 'Maximum call stack size exceeded';
+    signature = `stack-overflow · ${where}`;
+    message = errorText.slice(0, 400);
+    culprit = stackFrame ? culpritFromFrame(stackFrame, process.env.DSH_PROFILE_DIR || '', DEFAULT_HOME) : null;
   } else {
     signature = `${kind} · ${redact(errorText.split('\n')[0] ?? '').slice(0, 140)}`;
     message = errorText.slice(0, 400);
   }
 
-  const frame = firstFrame(errorText);
+  const frame = stackFrame ?? firstFrame(errorText);
   if (!culprit) culprit = culpritFromFrame(frame, process.env.DSH_PROFILE_DIR || '', DEFAULT_HOME) ?? clientCulprit(rendererText);
 
   const app = /(\d+\.\d+\.\d+[\w.-]*)/.exec(header.app ?? '')?.[1] ?? null;
