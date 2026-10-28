@@ -483,5 +483,24 @@
     "lastSeen": "2026-10-28T18:08:20.844Z",
     "incidentIds": [],
     "memoryId": null
+  },
+  {
+    "id": "R025",
+    "title": "堆内存要有上限：缓存和无界队列会走 OOM，进程直接没了",
+    "signature": "out-of-memory · heap",
+    "cause": "插件把缓存、会话历史或回放缓冲只增不减地留在内存里，V8 堆撞上限后 GC 反复失败，宿主进程被系统直接结束，没有异常可兜",
+    "fix": "集合与缓存设条数或字节上限并定期清理；大文件/长历史分段处理，不整份留在内存；起疑时看 crash log 的 Last few GCs 数字",
+    "guard": null,
+    "severity": "fatal",
+    "tags": [
+      "memory",
+      "oom",
+      "host"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-10-28T21:40:08.215Z",
+    "lastSeen": "2026-10-28T21:40:08.215Z",
+    "incidentIds": [],
+    "memoryId": null
   }
 ]

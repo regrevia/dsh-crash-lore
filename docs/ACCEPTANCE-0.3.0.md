@@ -52,3 +52,19 @@ npm run check      预检通过：. 没有发现会导致崩溃或激活失败�
 - 这类崩溃是**已在运行的 client JS 的运行时递归**，没有危险写入可拦；静态预检天然管不到。防线能做的是 `doctor` 自愈、规则沉淀、下次写类似代码时注入约束——不是「提前拒绝」。
 - 桌面宿主需重启才加载 0.3.0；`crash_lore_guard` 在旧进程上仍报旧版行为。
 - 运行时防护的 2 s 表面刷新只有在进程内验证（`c-*` 证据），活宿主重载窗口仍是已记录的残余风险（见 `ACCEPTANCE-0.2.1.md` §6）。
+
+## 7. 0.3.1 补记：还有第二次崩溃，而且是另一种死法
+
+发 0.3.0 时 `crash-2026-10-28T21-40-08-215Z-host.log` 才被注意到——比 18:08 那次更晚、形态也不同：`Error: dsh desktop host stopped: <--- Last few GCs --->`，GC 反复 scavenge 失败，进程在 ~3.7 GB 堆上被直接结束（shell pid 75411 / node pid 75480）。0.3.0 的解析器对它仍回 `unknown · Error: dsh desktop host stopped: <--- Last few GCs --->`，等于「又不知道是什么」。
+
+修法与栈溢出同路：`classifyCrash` 认 GC 日记与 `JavaScript heap out of memory` / `FATAL ERROR: … Allocation failed`，新 kind `out-of-memory`；签名取 GC 行括号里的提交堆上限（`Scavenge 3701.7 (3758.6) -> …` 的第二个数），规则库加 **R025**「堆内存要有上限：缓存和无界队列会走 OOM，进程直接没了」。
+
+同一份真实日志重放：
+
+```
+{"kind":"out-of-memory","sig":"out-of-memory · heap 3770 MB","frame":"main.js:3845"}
+```
+
+套件：`tests 146 / pass 146 / fail 0`，`cli check .` 预检通过。
+
+两次崩溃的边界要说清：栈溢出能指到 `dsh-mobile-use/scrcpy.js:1309`；堆耗尽只能指到 `main.js:3845`——V8 不告诉你谁把内存吃光，`culprit` 因此是宿主进程本身，不是某个插件。这类崩溃同样**没有可拦的写入**，防线能做的是记录准确、给出「查内存上限」的方向，以及在写插件时把「缓存设上限」注入约束。

@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 export function storeDir(home = DEFAULT_HOME) {
@@ -271,6 +271,9 @@ function classifyCrash(errorText, rendererText, source) {
   if (/startup failed/i.test(errorText)) return 'plugin-activation';
   if (/ValidationError: invalid config/i.test(errorText)) return 'config-validation';
   if (/Maximum call stack size exceeded/i.test(errorText)) return 'stack-overflow';
+  /* Heap death arrives as a V8 GC diary, not as a JS exception: the host reports
+   * `dsh desktop host stopped: <--- Last few GCs --->` and the process is gone. */
+  if (/<--- Last few GCs --->|JavaScript heap out of memory|FATAL ERROR: .*(heap|Allocation failed)/i.test(errorText)) return 'out-of-memory';
   if (/web boot:/.test(errorText)) return 'web-boot';
   if (/did not activate/i.test(errorText)) return 'plugin-activation';
   if (/Uncaught SyntaxError/i.test(rendererText) && !errorText.trim()) return 'client-error';
@@ -325,6 +328,16 @@ function parseCrash(file, text) {
     signature = `stack-overflow · ${where}`;
     message = errorText.slice(0, 400);
     culprit = stackFrame ? culpritFromFrame(stackFrame, process.env.DSH_PROFILE_DIR || '', DEFAULT_HOME) : null;
+  } else if (kind === 'out-of-memory') {
+    /* The diary names the ceiling it kept hitting; that number is the shape of the bug,
+     * while the 4000 ms / address noise around it is not. */
+    /* `Scavenge 3701.7 (3758.6) -> 3687.2 (3764.9) MB` — the number inside the parens is the
+     * committed heap, i.e. how close the process got to its ceiling. */
+    const sized = [...errorText.matchAll(/(\d+(?:\.\d+)?)\s*\(\s*(\d+(?:\.\d+)?)\s*\)\s*->\s*\d/g)]
+      .map((m) => Number(m[2]));
+    const peak = sized.length ? Math.max(...sized) : null;
+    signature = `out-of-memory · heap ${peak === null ? 'exhausted' : `${Math.round(peak)} MB`}`;
+    message = errorText.slice(0, 400);
   } else {
     signature = `${kind} · ${redact(errorText.split('\n')[0] ?? '').slice(0, 140)}`;
     message = errorText.slice(0, 400);

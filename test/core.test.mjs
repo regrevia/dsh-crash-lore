@@ -390,3 +390,30 @@ test('首次出现三份事故落成三条事件，不是一条', () => {
   assert.equal(forced.bumped, 0, '101 条同形日志重扫不增数');
   assert.equal(readIncidents(home).find((item) => item.kind === 'uncaught-exception').count, 3);
 });
+
+const OOM_LOG = `time: 2026-10-28T21:40:08.215Z
+source: host
+phase: running
+app: @deepseek-ai/dsh-desktop 0.2.1-rc.3
+platform: darwin arm64
+electron: 44.7.0
+node: 24.21.0
+
+--- error ---
+Error: dsh desktop host stopped: <--- Last few GCs --->
+
+[75480:0x108008b0000]   753895 ms: Scavenge 3701.7 (3758.6) -> 3687.2 (3764.9) MB, pooled: 0.0 MB, 3.76 / 0.00 ms (average mu = 0.944, current mu = 0.957) allocation failure; 
+[75480:0x108008b0000]   753921 ms: Scavenge 3712.7 (3770.1) -> 3698.2 (3775.7) MB, pooled: 0.0 MB, 3.59 / 0.00 ms (average mu = 0.944, current mu = 0.957) allocation failure; 
+
+    at ChildProcess.<anonymous> (file:///Applications/DeepSeek%20Harness.app/Contents/Resources/app.asar/lib/main.js:3845:36)
+    at ChildProcess.emit (node:events:514:28)
+`;
+
+test('heap death: reads the GC diary instead of filing it as unknown', () => {
+  const home = tmpHome();
+  const incident = parseArtifact(writeArtifact(home, 'crash-oom-host.log', OOM_LOG));
+  assert.equal(incident.kind, 'out-of-memory');
+  /* 提交堆 3770.1 MB：括号里的第二个数是被占满的额度，不是前一个采样点 */
+  assert.equal(incident.signature, 'out-of-memory · heap 3770 MB');
+  assert.equal(incident.frame, 'main.js:3845');
+});
