@@ -344,7 +344,7 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 
 ### 第 15 项 真实宿主里的目标解析与保护范围（绝对 / 会话相对 / 软链接 / 第二个插件，PASS，非 mock）
 
-`node scripts/real-host-resolve.mjs --json`（2026-10-29T01:5xZ 采样）→ **20/20 PASS**，2.8 s，exit 0；原始 JSON `/tmp/cl-resolve3.json`。做法：临时 `DSH_HOME` + `lab` profile 里装**三个**包（本包、探针 fixture、一个无关的第二个插件 `dsh-crash-lore-second-probe`），宿主**工作目录设为仓库父目录**（`/Users/apple/Desktop/DSH`），fixture 经宿主自己的 `ctx.tools.execute()` 写受保护文件三次、写第二个插件一次、写无害文件三次：
+`node scripts/real-host-resolve.mjs --json`（2026-10-29T02:4xZ 采样）→ **22/22 PASS**，2.3 s，exit 0；原始 JSON `/tmp/cl-resolve7.json`、`/tmp/cl-resolve3.json`、`/tmp/cl-resolve4.json`。做法：临时 `DSH_HOME` + `lab` profile 里装**三个**包（本包、探针 fixture、一个无关的第二个插件 `dsh-crash-lore-second-probe`），宿主**工作目录设为仓库父目录**（`/Users/apple/Desktop/DSH`），fixture 经宿主自己的 `ctx.tools.execute()` 写受保护文件三次、写第二个插件一次、写无害文件三次：
 
 ```
 PASS  session cwd is the repo parent — /Users/apple/Desktop/DSH
