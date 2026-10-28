@@ -5,7 +5,8 @@
  * against the live plugin root. This probe asks a real host process the same question
  * through the real tool pipeline: a fixture plugin writes the protected file four ways
  * (absolute, session-relative from a different cwd, symlink, and a benign symlink to a
- * scratch file). The protected file must stay byte-identical and the benign writes must
+ * scratch file), then writes a second unrelated plugin installed in the same profile, so
+ * the protected set is proven to come from the profile entries and not from this root alone. The protected file must stay byte-identical and the benign writes must
  * land, all without a model turn.
  *
  * Everything lives in a temp DSH_HOME. The protected file is this repo's own `index.js`;
@@ -16,13 +17,14 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const fixture = path.join(repoRoot, 'scripts', 'fixtures', 'resolve-probe');
+const secondPluginName = 'dsh-crash-lore-second-probe';
 const protectedFile = path.join(repoRoot, 'index.js');
 const json = process.argv.includes('--json');
 const checks = [];
@@ -85,6 +87,9 @@ function main() {
   const scratch = path.join(home, 'scratch.txt');
   const link = path.join(home, 'linked-index.js');
   const scratchLink = path.join(home, 'scratch-link.txt');
+  const secondRoot = path.join(home, 'second-plugin');
+  const secondEntry = path.join(secondRoot, 'index.js');
+  const secondBenign = path.join(secondRoot, 'notes.txt');
   const originalBytes = readFileSync(protectedFile);
   const before = sha(protectedFile);
   try {
@@ -99,13 +104,23 @@ function main() {
     add('this package installed as a profile layer', /Done in \d+ms/.test(addRepo.out), addRepo.out.trim().split('\n').pop());
     add('resolve-probe fixture installed', /Done in \d+ms/.test(addFixture.out), addFixture.out.trim().split('\n').pop());
 
+    /* A second, unrelated plugin in the same profile: the guard's protected set must come
+     * from the installed profile entries, not from this package's own root. */
+    mkdirSync(secondRoot, { recursive: true });
+    writeFileSync(path.join(secondRoot, 'package.json'), JSON.stringify({ name: secondPluginName, version: '0.0.0', private: true, type: 'module', main: 'index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }, null, 2));
+    writeFileSync(path.join(secondRoot, 'cordis.patch.yml'), '- insert:\n    - id: crash-lore-second-probe\n      name: dsh-crash-lore-second-probe\n      config: {}\n');
+    writeFileSync(secondEntry, 'export function apply() {}\n');
+    const secondBefore = sha(secondEntry);
+    const addSecond = run(['plugin', '--profile', 'lab', 'add', `link:${secondRoot}`], { DSH_HOME: home });
+    add('second unrelated plugin installed', /Done in \d+ms/.test(addSecond.out), addSecond.out.trim().split('\n').pop());
+
     symlinkSync(protectedFile, link);
     symlinkSync(scratch, scratchLink);
     add('symlink really points at the protected file', readlinkSync(link) === protectedFile, link);
     const relative = `${path.basename(repoRoot)}/index.js`;
 
     const dump = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
-    add('loader composes both entries', /\n- id: crash-lore\n/.test(dump.out) && /\n- id: crash-lore-resolve-probe\n/.test(dump.out), '');
+    add('loader composes all three entries', /\n- id: crash-lore\n/.test(dump.out) && /\n- id: crash-lore-resolve-probe\n/.test(dump.out) && /\n- id: crash-lore-second-probe\n/.test(dump.out), '');
 
     const bootEnv = {
       DSH_HOME: home,
@@ -117,6 +132,8 @@ function main() {
       CL_PROBE_LINK: link,
       CL_PROBE_SCRATCH: scratch,
       CL_PROBE_SCRATCH_LINK: scratchLink,
+      CL_PROBE_SECOND: secondEntry,
+      CL_PROBE_SECOND_BENIGN: secondBenign,
     };
     /* The host's cwd is the session cwd: the parent of this repo, so the relative form
      * resolves to the same protected file through a path the guard never saw installed. */
@@ -141,6 +158,9 @@ function main() {
     add('symlinked path is denied too', byLabel['symlink-deny']?.isError === true && /P013/.test(text('symlink-deny')), text('symlink-deny').slice(0, 120));
     add('denials come from this plugin', ['absolute-deny', 'relative-deny', 'symlink-deny'].every((label) => /CRASH_LORE_BLOCKED/.test(text(label)) && /dsh-crash-lore/.test(text(label))), '');
     add('benign write through a symlink still lands', byLabel['scratch-symlink-benign']?.isError === false && readFileSync(scratch, 'utf8').includes('through a symlink'), '');
+    add('second plugin\'s entry is denied too (scope from the profile)', byLabel['second-plugin-deny']?.isError === true && /P013/.test(text('second-plugin-deny')) && /CRASH_LORE_BLOCKED/.test(text('second-plugin-deny')), text('second-plugin-deny').slice(0, 120));
+    add('second plugin file byte-identical afterwards', secondBefore === sha(secondEntry), `${secondBefore.slice(0, 16)} → ${sha(secondEntry).slice(0, 16)}`);
+    add('benign write beside the second plugin lands', byLabel['second-plugin-benign']?.isError === false && existsSync(secondBenign), '');
     add('protected file is byte-identical afterwards', before === sha(protectedFile), `${before.slice(0, 16)} → ${sha(protectedFile).slice(0, 16)}`);
     const fatal = /FATAL|uncaughtException|worker thread exited/i.test(boot.out);
     add('no worker/loader crash during the probe', !fatal, '');

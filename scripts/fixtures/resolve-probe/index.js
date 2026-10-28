@@ -18,6 +18,8 @@ export function apply(ctx) {
   const link = process.env.CL_PROBE_LINK ?? '';
   const scratch = process.env.CL_PROBE_SCRATCH ?? '';
   const scratchLink = process.env.CL_PROBE_SCRATCH_LINK ?? '';
+  const second = process.env.CL_PROBE_SECOND ?? '';
+  const secondBenign = process.env.CL_PROBE_SECOND_BENIGN ?? '';
   const results = [];
   const cwd = process.cwd();
   const flush = () => writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), cwd, results }, null, 2));
@@ -46,5 +48,8 @@ export function apply(ctx) {
     await call('relative-deny', 'write', { file_path: rel, content: BAD });
     await call('symlink-deny', 'write', { file_path: link, content: BAD });
     await call('scratch-symlink-benign', 'write', { file_path: scratchLink, content: 'through a symlink\n' }, false);
+    /* Protection scope: a second, unrelated plugin installed in the same profile. */
+    await call('second-plugin-deny', 'write', { file_path: second, content: BAD });
+    await call('second-plugin-benign', 'write', { file_path: secondBenign, content: 'beside a plugin\n' }, false);
   }, 40);
 }

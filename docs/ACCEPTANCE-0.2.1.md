@@ -2,7 +2,7 @@
 
 - 验收对象：`/Users/apple/Desktop/DSH/dsh-crash-lore`，version `0.2.1`，以 `link:` 装入真实宿主 profile `~/.dsh/profiles/desktop`。
 - 验收时间：2026-10-28T23:49:38+08:00 ～ 2026-10-29T00:03+08:00（UTC 记录见各 JSON 的 `at`）。中间 A 先落盘 guard.mjs 批量语法检查（23:54），再按 Lead 决定落盘安装路径 fail-closed（00:00）；**产品代码 2026-10-29 00:01 起正式冻结**，本报告数字均为冻结后快照。历史数据与新数据分两段记录。
-- 最终判定：**自动门禁通过 / 真机加载激活 PASS（第 9 项）/ 真机进程内拦截 PASS（第 10 项）/ 真机目标解析 PASS（第 15 项）/ 交互式真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；第 10 项补上「真实宿主进程里的 guard 决策 + 拒绝载荷 + 修正后放行 + 文件 sha 不变」，第 15 项补上「绝对路径 / 会话相对路径 / 软链接三种写法在真实宿主里都落到同一 live surface」；仍缺模型交互半边（同会话存活、PTC 回传、三档切换、重启后 `set_plugin`），**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
+- 最终判定：**自动门禁通过 / 真机加载激活 PASS（第 9 项）/ 真机进程内拦截 PASS（第 10 项）/ 真机目标解析 PASS（第 15 项）/ 交互式真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；第 10 项补上「真实宿主进程里的 guard 决策 + 拒绝载荷 + 修正后放行 + 文件 sha 不变」，第 15 项补上「绝对路径 / 会话相对路径 / 软链接三种写法在真实宿主里都落到同一 live surface，且 profile 里另一个插件的入口同样在保护范围内」；仍缺模型交互半边（同会话存活、PTC 回传、三档切换、重启后 `set_plugin`），**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
 - 环境：macOS；真实宿主 pid 90362（启动于 2026-10-28 17:28:53）；插件源码最后修改 2026-10-28 23:40 ～ 2026-10-29 00:00，**晚于宿主启动**，故真实宿主进程内加载的不是 0.2.1 最终代码（见「真机状态」）。截至 00:10 复核，该 entry 已 `fiberPhase: failed`、`crash_lore_*` 工具不可见，**本机当前防护是关的**；本宿主的动态重载通道同时失效，只能靠重启加载 0.2.1。
 - 证据来源标记：
   - `[自动·进程内]`：`test/integration/*` 用插件真实 `apply()`、真实注册的 guard/pre-execute handler，在 mock profile 上跑；不是真实宿主。
@@ -342,9 +342,9 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 **证明什么**：真实宿主进程里、真实安装产物路径下，20 entry 预检 1.3 ms，远低于 200 ms 预算；0 误报；首次 76.8 ms 是子进程冷启动。
 **不证明什么**：不覆盖 20×1.5 MB 的极端体积（那组在 `adversarial` 进程内 6/0）。
 
-### 第 15 项 真实宿主里的目标解析（绝对路径 / 会话相对路径 / 软链接，PASS，非 mock）
+### 第 15 项 真实宿主里的目标解析与保护范围（绝对 / 会话相对 / 软链接 / 第二个插件，PASS，非 mock）
 
-`node scripts/real-host-resolve.mjs --json`（2026-10-29T01:3xZ 采样）→ **16/16 PASS**，1.7 s，exit 0；原始 JSON `/tmp/cl-resolve2.json`。做法：临时 `DSH_HOME` + `lab` profile 装本包与一个探针 fixture，宿主**工作目录设为仓库父目录**（`/Users/apple/Desktop/DSH`），fixture 经宿主自己的 `ctx.tools.execute()` 写受保护文件三次、写无害文件两次：
+`node scripts/real-host-resolve.mjs --json`（2026-10-29T01:5xZ 采样）→ **20/20 PASS**，2.8 s，exit 0；原始 JSON `/tmp/cl-resolve3.json`。做法：临时 `DSH_HOME` + `lab` profile 里装**三个**包（本包、探针 fixture、一个无关的第二个插件 `dsh-crash-lore-second-probe`），宿主**工作目录设为仓库父目录**（`/Users/apple/Desktop/DSH`），fixture 经宿主自己的 `ctx.tools.execute()` 写受保护文件三次、写第二个插件一次、写无害文件三次：
 
 ```
 PASS  session cwd is the repo parent — /Users/apple/Desktop/DSH
@@ -354,13 +354,16 @@ PASS  symlinked path is denied too          {"isError":true,...[CRASH_LORE_BLOCK
 PASS  denials come from this plugin
 PASS  benign scratch write executed (no over-blocking)
 PASS  benign write through a symlink still lands
+PASS  second plugin's entry is denied too (scope from the profile)   插件：dsh-crash-lore-second-probe … /private/var/folders/…/second-plugin/index.js
+PASS  second plugin file byte-identical afterwards  5b2df8275a78de7a → 5b2df8275a78de7a
+PASS  benign write beside the second plugin lands
 PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512862b92cd
 ```
 
-三份拒绝都带位置（解析后的真实 live 路径）、原因与建议，`code=CRASH_LORE_BLOCKED`、规则 `P013`；无害写到 scratch 与其软链接都真的落盘。
+四份拒绝都带位置（解析后的真实 live 路径）、原因与建议，`code=CRASH_LORE_BLOCKED`、规则 `P013`；对第二个插件的拒绝里「插件：」写的是 `dsh-crash-lore-second-probe`，说明受保护集合来自 profile 里已安装的 entry，而不是本包自己的根目录；无害写到 scratch、其软链接、第二个插件旁都真的落盘。
 
-**证明什么**：目标解析的三个缺口（绝对路径、会话相对路径、软链接）在**真实宿主进程**里都被识别到同一个 live surface，不是只在进程内假 ctx 上成立；软链接 / 相对路径没有绕过、也没有把无害文件误判。
-**不证明什么**：① 只覆盖 `write`，`set_plugin` entry id、`set_bundle`、保护范围刷新仍只有进程内 `c-*` 证据；② 不是当前 desktop 实例（临时 profile）；③ 无关文件走软链接放行，只说明「解析后不在 live surface 就放过」，不覆盖外部编辑器绕过（见已知缺口）。
+**证明什么**：① 目标解析的三个缺口（绝对路径、会话相对路径、软链接）在**真实宿主进程**里都被识别到同一个 live surface，不是只在进程内假 ctx 上成立；② 保护范围来自 profile 已安装 entry，第二个无关插件的入口同样被拒、其旁边无害文件照常放行；③ 软链接 / 相对路径没有绕过、也没有把无害文件误判。
+**不证明什么**：① 只覆盖 `write`，`set_plugin` entry id、`set_bundle` 以及**运行中**增删插件后的保护范围刷新仍只有进程内 `c-*` 证据（本项是 boot 时由 profile 合成的静态范围）；② 不是当前 desktop 实例（临时 profile）；③ 无关文件走软链接放行，只说明「解析后不在 live surface 就放过」，不覆盖外部编辑器绕过（见已知缺口）。
 
 ## 3. 附加项
 
@@ -385,7 +388,7 @@ PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512
 | `node scripts/real-host-activation.mjs` | 6 pass / 0 fail 两次：仓库 link（00:15，1.2–1.4 s）、`dsh-crash-lore@0.2.1` registry 产物（00:20，2.5–3.0 s），真实宿主进程加载，非 mock |
 
 | `node scripts/real-host-guard.mjs` | 19 pass / 0 fail（2026-10-28T16:26:50Z，2.1–2.9 s），真实宿主进程内对真实 `write` 调用做拦截决策，并走通被拒→修正→通过，非 mock；同一 fixture 在宿主进程里跑 20 entry 预检 3 次（1.34/1.51/76.82 ms，0 误报） |
-| `node scripts/real-host-resolve.mjs` | 16 pass / 0 fail（1.7 s），真实宿主进程内同一受保护文件的绝对路径 / 会话相对路径 / 软链接三种写法各被拒一次（`P013`），无害写与无害软链接写正常落盘，被拒文件 sha256 不变，非 mock |
+| `node scripts/real-host-resolve.mjs` | 20 pass / 0 fail（2.8 s），真实宿主进程内同一受保护文件的绝对路径 / 会话相对路径 / 软链接三种写法各被拒一次（`P013`），profile 里第二个无关插件的入口同样被拒且拒绝里写的是它自己的插件名，无害写 / 无害软链接写 / 第二插件旁无害写正常落盘，两个被拒文件 sha256 均不变，非 mock |
 | `node scripts/real-host-session.mjs` | 26 pass / 0 fail（2026-10-28T16:54:30Z 采样）：真实宿主 + 真实模型回合 + 真实 PTC：危险写被拒后拒绝回原会话、会话继续完成修复、第二会话独立存活、`run_code` 子调用同样被拒并回传；追加三档模式（observe/off 落盘 + 仅监测日志）与模式配置断言，非 mock |
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
@@ -412,14 +415,14 @@ PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512
 - 附带要观察的一条：重启后 `set_plugin` / `set_bundle` 的在线重载是否恢复可用（本轮它是坏的）。若重启后仍报 `cannot create effect on inactive context`，那是宿主侧缺陷，应单独报给宿主，不记在插件账上。
 
 - **2026-10-29 01:2x 重启前基线（本会话在线只读复核，不写入）**：`plugin_manager list_plugins` 共 224 项，`include:crash-lore`（`dsh-crash-lore`, `patchId: crash-lore`）`enabled: true`、**`fiberPhase: failed`**；`cordis Inspect · Tool.listTools` 在本会话可见工具里**没有** `crash_lore_*`（0 处命中，全量目录在 `/tmp` 溢写里检索）；`Config.listConfigs` 里该 entry 为 `include:crash-lore`。`adb (dsh-mobile-use)` 同为 `failed`，与 00:12 判断一致：宿主动态 apply 通道整体坏。宿主 `pid 90362` 启动 17:28:53、截至 01:12 已存活 7h43m，而 `dsh-crash-lore` 是 18:54 才进入 desktop profile 的 bundle 列表，**本进程从未加载 0.2.1**。重启后复核口径：`fiberPhase: active` + `crash_lore_guard` 可见 + 工具输出「模式 开启 / 实际状态 正常」+ 另一会话真实危险写被拒且会话继续，四者齐了才算 ①。
-- 01:3x 补第四条**真实宿主进程**证据（见第 15 项）：同一受保护文件的绝对路径、**会话相对路径**（宿主 cwd=仓库父目录）、**软链接**三种写法在真实 `ctx.tools.execute()` 下各被拒一次（`P013`，载荷带位置/原因/建议），无害写与无害软链接写正常落盘，被拒文件 sha256 `9428e512…` 不变（`real-host-resolve.mjs` 16/16，1.7 s）。这把「目标解析缺口只在进程内验过」补成真实宿主证据；`set_plugin` entry id / `set_bundle` / 保护范围刷新仍是进程内证据。
+- 01:5x 补第四条**真实宿主进程**证据（见第 15 项）：同一受保护文件的绝对路径、**会话相对路径**（宿主 cwd=仓库父目录）、**软链接**三种写法在真实 `ctx.tools.execute()` 下各被拒一次（`P013`，载荷带位置/原因/建议），**另一个无关插件**的入口也照样被拒且拒绝里写的是它的插件名（保护范围来自 profile entry），无害写 / 无害软链接写 / 第二插件旁无害写正常落盘，两个被拒文件 sha256 均不变（`real-host-resolve.mjs` 20/20，2.8 s）。这把「目标解析缺口只在进程内验过」补成真实宿主证据；`set_plugin` entry id / `set_bundle` / **运行中**增删插件后的范围刷新仍是进程内证据。
 
 
 ## 6. 结论与残留风险
 
-- 功能面（第 1–6、8 项）在真实 handler / 真实 `apply()` 层面通过，0.2.0 的四个已知洞（相对路径、symlink、`set_bundle`、entry-id≠包名）已封；未解析目标 fail-closed。
+- 功能面（第 1–6、8 项）在真实 handler / 真实 `apply()` 层面通过，0.2.0 的四个已知洞（相对路径、symlink、`set_bundle`、entry-id≠包名）已封；未解析目标 fail-closed。其中相对路径与 symlink 两洞另由第 15 项在真实宿主进程里补证（绝对 / 相对 / 软链接三种写法同拒，第二个无关插件同拒），`set_bundle`、entry-id 与运行中范围刷新仍只有进程内证据。
 - 第 7 项性能历史 FAIL（421–533 ms）已保留；A 的批量语法检查落盘后复测 **1.3 ms**（min），第 7 项转 PASS，自动门禁通过。若后续再改 `guard.mjs` 需重跑 c14，不能用本次数字覆盖历史。
-- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 19/19）与目标解析（第 15 项 16/16）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）；三档真实切换（⑤）、20 entry 真实耗时（⑥）、真实 PTC 回传（④）已由第 13/14/12 项在临时真实宿主内补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
+- 真机拦截：**加载/激活半边（第 9 项，仓库 link 与 registry 产物各 6/6）、guard 决策半边（第 10 项 19/19）与目标解析/保护范围（第 15 项 20/20）与交互式半边里的 ② 拒绝文案/同会话继续/改正后放行、③ 第二会话存活（第 11 项 15/15，真实模型回合）已有真实宿主进程证据**。仍未取得的是：当前 desktop 实例本身为 `fiberPhase: failed` 的旧代码（①，需重启）；三档真实切换（⑤）、20 entry 真实耗时（⑥）、真实 PTC 回传（④）已由第 13/14/12 项在临时真实宿主内补上。当前运行中的进程仍是旧代码，不能把进程内 PASS 或临时宿主 PASS 当成「本机保护已开启」。
 - 本报告所有 mock/进程内证据与真实宿主证据分开标注；真实第二会话、真实 PTC 本轮未取得，来源列保持「无（未取得）」，不冒充 Lead 补证。
 - **第 3 项对抗用例已闭环**：修复前 20 个 1.5 MB 级 entry、坏语法、150 ms 预算时会 `unchecked:20` 且 ALLOWED（证据 `/tmp/cl-acceptance-adversarial-before.txt`：2 pass / 1 fail、exit 1）；A 改为安装/启用路径 3000 ms + 单次重试 + `uninspected` 硬拒后，同用例 deny P013，5 ms 预算注入 deny `uninspected`（文案不冒充语法错误），20 个大而合法入口 allowed。`adversarial --strict` 现为 6/6、exit 0。写前检查仍是 fail-open，符合「写前不因性能预算误伤」的原口径。
 
