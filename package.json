@@ -1,6 +1,6 @@
 {
   "name": "dsh-crash-lore",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "把 DSH 真实崩溃日志沉淀成精简约束，装插件前静态预检拦崩，起不来时受控自愈",
   "type": "module",
   "exports": {
