@@ -2,7 +2,7 @@
 
 - 验收对象：`/Users/apple/Desktop/DSH/dsh-crash-lore`，version `0.2.1`，以 `link:` 装入真实宿主 profile `~/.dsh/profiles/desktop`。
 - 验收时间：2026-10-28T23:49:38+08:00 ～ 2026-10-29T00:03+08:00（UTC 记录见各 JSON 的 `at`）。中间 A 先落盘 guard.mjs 批量语法检查（23:54），再按 Lead 决定落盘安装路径 fail-closed（00:00）；**产品代码 2026-10-29 00:01 起正式冻结**，本报告数字均为冻结后快照。历史数据与新数据分两段记录。
-- 最终判定：**自动门禁通过 / 真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；真机激活未覆盖、待重启宿主后验证，**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
+- 最终判定：**自动门禁通过 / 真机加载激活 PASS（第 9 项）/ 交互式真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；真机激活未覆盖、待重启宿主后验证，**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
 - 环境：macOS；真实宿主 pid 90362（启动于 2026-10-28 17:28:53）；插件源码最后修改 2026-10-28 23:40 ～ 2026-10-29 00:00，**晚于宿主启动**，故真实宿主进程内加载的不是 0.2.1 最终代码（见「真机状态」）。截至 00:10 复核，该 entry 已 `fiberPhase: failed`、`crash_lore_*` 工具不可见，**本机当前防护是关的**；本宿主的动态重载通道同时失效，只能靠重启加载 0.2.1。
 - 证据来源标记：
   - `[自动·进程内]`：`test/integration/*` 用插件真实 `apply()`、真实注册的 guard/pre-execute handler，在 mock profile 上跑；不是真实宿主。
@@ -22,7 +22,7 @@
 | 6 | guard/observe/off 状态与行为一致，off 真不拦 | **PASS** | `c9-*` 开启=拒绝；`c10-*` 仅监测=放行但记录、`hooks.write=sync && pre=async`；`c11-*` 关闭=放行且 0 新记录 | `[自动·进程内]` |
 | 7 | 20 entry 预检计时，>200 ms 判失败 | **历史 FAIL → 修复后 PASS** | 历史 `preflight()` 421.3–533 ms（20×node --check≈21.5 ms/个）；A 批量解析落盘后 **1.3 ms**（首次 31.0 ms 含子进程） | `[自动·进程内]` |
 | 8 | `npm pack` + 临时 profile 冷装，产物/默认路径/无作者数据 | **PASS** | 冷装 28/28；tgz 76899 B；defense/locale/seed 齐全；`p18` 零作者 incident | `[自动·进程内]`（临时 DSH_HOME） |
-| 9 | 0.2.1 被**真实宿主进程**的 loader 加载并激活（不是进程内 mock） | **PASS** | `real-host-activation.mjs` 6/6，1354 ms；`--dump-config` 合成树第 385 行含 `dsh-crash-lore`；boot 无 `did not activate`、无 `(dsh-crash-lore)` 报错并走到 `MISSING_CREDENTIAL`（= 整棵树已 mount） | `[真机·真实宿主进程]`（临时 DSH_HOME + 出厂 headless 模板；仓库 link 与 registry 产物各 6/6；交互式 a–e 仍待重启） |
+| 9 | 0.2.1 被**真实宿主进程**的 loader 加载并激活（不是进程内 mock） | **PASS** | `real-host-activation.mjs` 6/6（单次 1.2–3.0 s）；`--dump-config` 合成树第 385 行含 `dsh-crash-lore`；boot 无 `did not activate`、无 `(dsh-crash-lore)` 报错并走到 `MISSING_CREDENTIAL`（= 整棵树已 mount） | `[真机·真实宿主进程]`（临时 DSH_HOME + 出厂 headless 模板；仓库 link 与 registry 产物各 6/6；交互式 a–e 仍待重启） |
 
 汇总 JSON：`/tmp/cl-acceptance-verify.json`（编排器）、`/tmp/cl-acceptance-matrix.json`、`/tmp/cl-acceptance-cold-install.json`、`/tmp/cl-acceptance-extras.json`。
 
@@ -227,7 +227,7 @@ PASS  real host activation (2544 ms)
 | extras | 5/5 |
 | `node scripts/verify-0.2.1.mjs` | 6 pass / 0 fail（2026-10-28T16:01:40Z） |
 | `test/integration/adversarial.mjs --strict` | 6 pass / 0 fail，exit 0（修复前为 exit 1，证据保留） |
-| `node scripts/real-host-activation.mjs` | 6 pass / 0 fail，1242 ms（2026-10-29 00:15，仓库 link）与 2544 ms（00:20，`dsh-crash-lore@0.2.1` registry 产物），真实宿主进程加载，非 mock |
+| `node scripts/real-host-activation.mjs` | 6 pass / 0 fail 两次：仓库 link（00:15，1.2–1.4 s）、`dsh-crash-lore@0.2.1` registry 产物（00:20，2.5–3.0 s），真实宿主进程加载，非 mock |
 
 关键文件 sha256（产品冻结后 2026-10-29 00:02 采样）：`package.json fd2d7150…`、`index.js 9428e512…`、`guard.mjs 53baf07f…`、`defense.mjs f95e8c87…`、`state.mjs 7cb6f887…`、`lib/resolve.mjs 6778f718…`、`lib/judge.mjs f5a20752…`、`core.mjs e5279e46…`、`cli.mjs b0eda281…`。历史快照（A 修复前）：`index.js f57b8a0d…`、`defense.mjs 673d4986…`/`ea38322f…`（安装 fail-closed 前）、`guard.mjs c108aedf…`、`lib/judge.mjs 49ee359e…`。
 
