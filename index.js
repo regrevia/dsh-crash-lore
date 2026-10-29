@@ -6,6 +6,7 @@
  * and a plugin whose job is preventing crashes must not become one.
  */
 import path from 'node:path';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import {
@@ -46,6 +47,7 @@ import {
   setMode,
 } from './state.mjs';
 import { apply as applyInstallCheck } from './install-check/index.mjs';
+import { appendLineage, buildBrief, clip, generationOf, lineageChain, readLineage } from './handoff.mjs';
 
 export const name = 'dsh-crash-lore';
 /* Harness ≥ the 2026-09 tool contract: every tool must declare an output shape and a renderer.
@@ -702,6 +704,183 @@ export function apply(ctx, config = {}) {
     setMode(state, value);
     return `模式已切到 ${MODE_LABELS[value]}`;
   };
+
+  /* 化龙妙法：把一个大会话转世成新会话。不碰别的插件、不恢复旧会话（恢复旧会话本身就要吃
+   * 几 GB 堆），只读事件、确定性写交接单、建一个空会话、归档旧会话。内存仍旧只有重启才还。 */
+  ctx.effect(() => tools.register(withOutput({
+    name: 'crash_lore_handoff',
+    description: '把一个已停下的会话转世成新会话：从原会话记录生成交接单，新建子会话并改名，原会话归档，血缘记在插件自己名下。会话还在跑会拒绝转世（force 可强行）；内存只有重启才能拿回来。',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string', description: '要转世的会话 id，默认当前会话' },
+        title: { type: 'string', description: '新会话标题，默认「原标题 · 转世」' },
+        brief: { type: 'boolean', description: '把交接单发给新会话，默认发；关掉只建空会话并把单子写盘' },
+        force: { type: 'boolean', description: '会话还在跑也强行转世，默认拒绝' },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args, exec) => {
+      const sessions = serviceOf(ctx, 'sessionController');
+      if (!sessions || typeof sessions.inspect !== 'function' || typeof sessions.create !== 'function') {
+        return '会话服务没接上，转世没做，什么都没改。';
+      }
+      const signal = propOf(exec, 'signal');
+      /* 第二个参数是中断信号，不能传空对象。 */
+      const call = signal instanceof AbortSignal ? signal : new AbortController().signal;
+      const current = propOf(propOf(propOf(exec, 'agent'), 'session'), 'id');
+      const asked = typeof args?.sessionId === 'string' ? args.sessionId.trim() : '';
+      const sourceId = asked || (typeof current === 'string' ? current : '');
+      if (!sourceId) return '不知道要转世哪个会话：请传 sessionId。什么都没改。';
+      /* 转世的前提是原会话已经收尾。别人还在跑的时候转世，旧回合会和接手的新会话同时写同一份
+       * 工作，旧回合还会在归档后被腰斩（可能留下悬空 tool_calls）。自己转自己例外：当前这一轮
+       * 就是收尾动作本身。查不到状态不算「在跑」，但要把结果说清楚。 */
+      if (sourceId !== current && args?.force !== true) {
+        let busy = false;
+        if (typeof sessions.list === 'function') {
+          try {
+            const page = await sessions.list({}, call);
+            const items = Array.isArray(page?.items) ? page.items : [];
+            busy = items.some((item) => item?.sessionId === sourceId && item?.running === true);
+          } catch (error) {
+            recordError(state, error);
+            return `查不到会话 ${sourceId} 是否还在跑，没敢动它。确认它已经停下后重试，或传 force: true。什么都没改。`;
+          }
+        }
+        if (busy) {
+          return `会话 ${sourceId} 还在跑，不能转世：先让它跑完或手动停掉，再来一次。现在就转的话，旧回合会在归档后被腰斩，新会话也会和它抢同一份工作。确认要强行转世就传 force: true。什么都没改。`;
+        }
+      }
+      let inspection;
+      try {
+        inspection = await sessions.inspect(sourceId, call);
+      } catch (error) {
+        return `读不到会话 ${sourceId}：${error?.message ?? error}。什么都没改。`;
+      }
+      const brief = buildBrief({ parentId: sourceId, events: inspection?.events });
+      const childTitle = clip(`${brief.title} · 转世`, 40);
+      const cwd = inspection?.meta?.cwd;
+      let child;
+      try {
+        child = await sessions.create(cwd ? { cwd } : {}, call);
+      } catch (first) {
+        /* 老会话的 cwd 可能已经不在任何工作区里；建不出来就退回默认工作区，别让转世卡在参数上。 */
+        try {
+          child = await sessions.create({}, call);
+        } catch (error) {
+          return `新会话没建起来：${error?.message ?? first?.message ?? error}。原会话没动，可以重试。`;
+        }
+      }
+      const childId = child?.sessionId;
+      if (typeof childId !== 'string' || !childId) return '没有拿到新会话 id，原会话没动，可以重试。';
+      if (typeof sessions.rename === 'function') {
+        try {
+          await sessions.rename({ sessionId: childId, title: childTitle }, call);
+        } catch (error) {
+          recordError(state, error);
+        }
+      }
+      let delivered = 'message';
+      if (args?.brief !== false && typeof sessions.prompt === 'function') {
+        try {
+          await sessions.prompt({
+            requestId: `handoff-${randomUUID()}`,
+            sessionId: childId,
+            mode: 'queue',
+            content: [{ type: 'text', text: brief.text }],
+          }, call);
+        } catch (error) {
+          /* 发不出去就退回文件：会话已经建好，单子不能丢。 */
+          delivered = 'file';
+          recordError(state, error);
+        }
+      } else {
+        delivered = 'file';
+      }
+      let briefPath = '';
+      if (delivered === 'file') {
+        try {
+          briefPath = path.join(home, 'handoff', `${childId}.md`);
+          fs.mkdirSync(path.dirname(briefPath), { recursive: true });
+          fs.writeFileSync(briefPath, brief.text);
+        } catch (error) {
+          recordError(state, error);
+        }
+      }
+      let archived = false;
+      const workspaces = serviceOf(ctx, 'workspaceController');
+      if (workspaces && typeof workspaces.archiveSession === 'function') {
+        try {
+          await workspaces.archiveSession({ sessionId: sourceId }, call);
+          archived = true;
+        } catch (error) {
+          recordError(state, error);
+        }
+      }
+      let generation = 1;
+      try {
+        generation = generationOf(readLineage(home), sourceId);
+        appendLineage(home, {
+          child: childId,
+          parent: sourceId,
+          parentTitle: brief.title,
+          title: childTitle,
+          generation,
+          at: new Date().toISOString(),
+          briefChars: brief.text.length,
+        });
+      } catch (error) {
+        recordError(state, error);
+      }
+      const lines = [
+        `转世完成：新会话 ${childId}（第 ${generation} 代）`,
+        `标题：${childTitle}`,
+        delivered === 'message' ? '交接单已经发到新会话里，它会先回一句「收到」等你下一步。' : `交接单写在 ${briefPath || '（写盘失败，内容在本次工具结果里）'}，下次打开新会话时按它接着干。`,
+        archived ? `原会话 ${sourceId} 已归档，需要细节时取消归档回看，不会删。` : `原会话 ${sourceId} 没有归档成功（工作区服务没接上），但记录都还在。`,
+        '内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开它再发一句「继续」。',
+        '血缘记在插件自己的记录里，改标题不会丢；要看链条用 crash_lore_lineage。',
+      ];
+      if (delivered === 'file' && brief.text.length) {
+        lines.push('');
+        lines.push(brief.text);
+      }
+      return { text: lines.join('\n'), childId, parentId: sourceId, generation, delivered, archived, briefPath };
+    },
+  })), 'crash-lore: crash_lore_handoff');
+
+  ctx.effect(() => tools.register(withOutput({
+    name: 'crash_lore_lineage',
+    description: '看一个会话的转世血缘：第几代、从哪个会话转来、中间经过几代。标题被改过也不影响。',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string', description: '会话 id，默认当前会话' },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args, exec) => {
+      const current = propOf(propOf(propOf(exec, 'agent'), 'session'), 'id');
+      const asked = typeof args?.sessionId === 'string' ? args.sessionId.trim() : '';
+      const sessionId = asked || (typeof current === 'string' ? current : '');
+      if (!sessionId) return '请传 sessionId。';
+      const rows = readLineage(home);
+      if (!rows.length) return '还没有转世记录。用 crash_lore_handoff 转世一次就会记下来。';
+      const chain = lineageChain(rows, sessionId);
+      const lines = [];
+      if (chain.length) {
+        lines.push(`当前会话 ${sessionId} 的血缘链（从远到近）：`);
+        for (const row of chain) lines.push(`- 第 ${row.generation} 代 ${row.child} ← ${row.parent}${row.title ? `（${row.title}）` : ''}`);
+      } else {
+        lines.push(`当前会话 ${sessionId} 不是别人转世来的。`);
+      }
+      const children = rows.filter((row) => row.parent === sessionId);
+      if (children.length) {
+        lines.push(`从这里转出去的后代 ${children.length} 个：`);
+        for (const row of children) lines.push(`- ${row.child}（第 ${row.generation} 代，${row.at ?? ''}）`);
+      }
+      return lines.join('\n');
+    },
+  })), 'crash-lore: crash_lore_lineage');
 
   ctx.effect(() => tools.register(withOutput({
     name: 'crash_lore_guard',
