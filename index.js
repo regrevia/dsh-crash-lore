@@ -230,6 +230,9 @@ function log(message) {
 /* The wall that actually kills this machine, read from its own crash log: V8 dies in old space
  * before the nominal limit, so the badge counts against the observed death heap, not the limit. */
 let crashWallCache = null;
+/* 底部状态圈的自检：路由到底挂上没有，只有这里知道。不进 prompt，只在 crash_lore_guard 里显示，
+ * 免得「圈没数据」和「圈坏了」永远分不出来。 */
+const badgeState = { mounted: false, path: '/crash-lore/health', error: '' };
 function crashWallMB(home) {
   if (crashWallCache !== null) return crashWallCache;
   let wall = 0;
@@ -315,13 +318,19 @@ export function apply(ctx, config = {}) {
    * always-visible indicator instead of a line in every prompt. Turning the badge off removes the
    * route too — an off switch on the screen should not leave a live endpoint behind. */
   if (config.healthBadge !== false) {
-    ctx.effect(() => {
-      const server = serviceOf(ctx, 'webServer');
+    /* webServer 是可选服务，apply 时它不一定已经就绪：直接 ctx.get 会拿到 undefined，路由就
+     * 永远不注册，圈在界面上静默消失。这里能动态注入就等它出现，只有拿不到注入能力时才退回。 */
+    const mountHealth = (scope) => scope.effect(() => {
+      const server = serviceOf(scope, 'webServer');
       if (!server || typeof server.register !== 'function') {
+        badgeState.mounted = false;
+        badgeState.error = '没有 webServer 服务';
         log('没有 webServer 服务，本轮不提供内存状态圈');
         return () => {};
       }
       let dispose;
+      badgeState.path = '/crash-lore/health';
+      badgeState.error = '';
       try {
         dispose = server.register({
           kind: 'exact',
@@ -342,9 +351,12 @@ export function apply(ctx, config = {}) {
           },
         });
       } catch (error) {
+        badgeState.mounted = false;
+        badgeState.error = String(error?.message ?? error);
         log(`内存状态圈未挂上：${error?.message ?? error}`);
         return () => {};
       }
+      badgeState.mounted = true;
       return () => {
         try {
           if (typeof dispose === 'function') dispose();
@@ -353,6 +365,12 @@ export function apply(ctx, config = {}) {
         }
       };
     }, 'crash-lore: health badge');
+
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['webServer'], mountHealth);
+    } else {
+      mountHealth(ctx);
+    }
   }
 
   /* Resident section: the compact lore, re-read on every step so a rule recorded mid-session
@@ -1043,6 +1061,7 @@ export function apply(ctx, config = {}) {
       for (const line of loopLines(loops)) lines.push(line);
       const heap = watchdogStatus();
       lines.push(heapLine(heap));
+      lines.push(badgeState.mounted ? `内存状态圈 已挂载 ${badgeState.path}` : `内存状态圈 未挂载${badgeState.error ? `（${badgeState.error}）` : ''}`);
       for (const line of footprintLines(sessionFootprint(home))) lines.push(line);
       lines.push('覆盖不到：命令行直接写文件、外部编辑器保存、DSH 自身升级、已经装进去的代码在运行时崩。');
       if (note) lines.push(note);
@@ -1064,5 +1083,5 @@ export function apply(ctx, config = {}) {
     return () => {};
   }, 'crash-lore: last incident log');
 
-  return { scan: () => lastScan, header: PROMPT_HEADER };
+  return { scan: () => lastScan, header: PROMPT_HEADER, badge: () => ({ ...badgeState }) };
 }

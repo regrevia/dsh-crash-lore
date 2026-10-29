@@ -100,6 +100,9 @@ function makeContext(services = {}) {
     },
   };
   if (services.tools) ctx.tools = services.tools;
+  /* 真实宿主有 ctx.inject(keys, scope => …) 用来等可选服务就绪；这里给个同形实现，
+   * 好让「服务在 apply 之后才出现」这个时序也能被测到。 */
+  if (typeof services.deferInject === 'function') ctx.inject = services.deferInject;
   return ctx;
 }
 
@@ -424,4 +427,41 @@ test('the snapshot carries the three layers as separate values', () => {
   ].sort());
   state.lastError = null;
   assert.equal(defenseState().mode, 'protect');
+});
+
+
+test('the memory ring route is mounted when webServer already exists', async () => {
+  await withProfile(async () => {
+    const routes = [];
+    const server = { register: (route) => { routes.push(route); return () => {}; } };
+    const ctx = makeContext({ webServer: server });
+    apply(ctx, {});
+    assert.equal(routes.length, 1);
+    assert.equal(routes[0].path, '/crash-lore/health');
+    const body = await new Promise((resolve) => {
+      const chunks = [];
+      routes[0].handler({}, { writeHead: () => {}, end: (chunk) => resolve(String(chunk)) });
+      void chunks;
+    });
+    const payload = JSON.parse(body);
+    assert.equal(payload.enabled, true);
+    assert.ok(Number.isFinite(payload.pct));
+  });
+});
+
+test('a webServer that only shows up after apply still gets the route', async () => {
+  await withProfile(async () => {
+    const routes = [];
+    const server = { register: (route) => { routes.push(route); return () => {}; } };
+    let injected = null;
+    /* 服务此刻还不在：apply 时 ctx.get('webServer') 是 undefined，正是圈静默消失的那种时序。 */
+    const ctx = makeContext({ deferInject: (keys, scopeFactory) => { injected = { keys, scopeFactory }; } });
+    apply(ctx, {});
+    assert.equal(routes.length, 0);
+    assert.deepEqual(injected.keys, ['webServer']);
+    ctx.get = (key) => (key === 'webServer' ? server : undefined);
+    injected.scopeFactory(ctx);
+    assert.equal(routes.length, 1);
+    assert.equal(routes[0].path, '/crash-lore/health');
+  });
 });

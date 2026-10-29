@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
   factory(load) {
     const React = load('react');
     const h = React.createElement;
-    const POLL_MS = 15000;
+    const POLL_MS = 5000;
     const SIZE = 16;
     const STROKE = 2.5;
     const RADIUS = (SIZE - STROKE) / 2;
@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
     }
 
     function hintOf(state) {
-      if (!state || !state.heapMB) return '内存占用';
+      if (!state || !Number.isFinite(state.pct)) return '内存读数还没到';
       const used = `${state.heapMB} / ${state.wallMB} MB`;
       if (state.pct >= DANGER) return `接近内存上限（${used}）：重启 DSH 才会释放`;
       return `内存占用 ${used}`;
@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
             .then(() => fetch('/crash-lore/health', { cache: 'no-store' }))
             .then((response) => (response.ok ? response.json() : null))
             .then((payload) => {
-              if (alive) setState(payload && payload.enabled ? payload : { enabled: false });
+              if (alive && payload && payload.enabled) setState(payload);
             })
             .catch(() => {
               /* endpoint missing means the feature is off; keep the last reading */
@@ -66,12 +66,14 @@ window.__ModuleLoader__.load({
         };
       }, []);
 
-      if (!state || !state.enabled) return null;
-
-      const pct = Number.isFinite(state.pct) ? state.pct : 0;
-      const color = pct >= DANGER ? RED : pct >= WARN ? AMBER : 'inherit';
-      const style = { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, lineHeight: 1, color, whiteSpace: 'nowrap', userSelect: 'none' };
-      return h('span', { title: hintOf(state), style }, h('span', { key: 'label', style: { opacity: 0.66 } }, '内存'), h(Ring, { key: 'ring', pct }), h('span', { key: 'pct', style: { fontVariantNumeric: 'tabular-nums' } }, `${pct}%`));
+      /* 圈始终在：读不到数据就显示占位，不做成消失。
+       * 消失的指示器分不出「内存没事」和「指示器坏了」。
+       * 读数保留最后一次，偶发失败不清屏。 */
+      const known = Boolean(state) && Number.isFinite(state.pct);
+      const pct = known ? state.pct : 0;
+      const color = known ? (pct >= DANGER ? RED : pct >= WARN ? AMBER : 'inherit') : 'inherit';
+      const style = { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, lineHeight: 1, color, whiteSpace: 'nowrap', userSelect: 'none', opacity: known ? 1 : 0.5 };
+      return h('span', { title: hintOf(known ? state : null), style }, h('span', { key: 'label', style: { opacity: 0.66 } }, '内存'), h(Ring, { key: 'ring', pct }), h('span', { key: 'pct', style: { fontVariantNumeric: 'tabular-nums' } }, known ? `${pct}%` : '–'));
     }
 
     return {
