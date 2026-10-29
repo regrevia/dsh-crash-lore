@@ -9,6 +9,7 @@
  * only shows up at runtime (races, unbounded growth under load, a proxy fight between
  * two plugins) is outside what this can see and must not be promised.
  */
+import { checkSource } from '../../guard.mjs'
 import { judgeDir } from '../../lib/judge.mjs'
 
 const loud = new Set(['fatal', 'boot'])
@@ -19,18 +20,38 @@ function line(at, file) {
 }
 
 /**
+ * `rules` are the ones this machine learned from its own crashes; the seed rules already
+ * live in judge.mjs. Both run here so a lesson learned from one person's log guards the
+ * next install on that same machine.
+ *
  * @param {string} dir package root that would be activated
+ * @param {{rules?: object[]}} [options]
  * @returns {{ruleId: string, severity: string, file: string, line: number, title: string, zh: string, en: string}[]}
  */
-export function implementationRisks(dir) {
+export function implementationRisks(dir, options = {}) {
   if (!dir) return []
   let findings = []
   try {
     findings = judgeDir(dir)
   } catch {
-    return []
+    findings = []
   }
+  const rules = Array.isArray(options.rules) ? options.rules.slice(0, 60) : []
+  if (rules.length) {
+    try {
+      findings = findings.concat(checkSource(dir, rules))
+    } catch {
+      // A learned rule that fails to match is not a reason to lose the seed findings.
+    }
+  }
+  const seen = new Set()
   const kept = findings
+    .filter((finding) => {
+      const id = `${finding.ruleId}|${finding.file}|${finding.line ?? 0}`
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
     .filter((finding) => loud.has(finding.severity))
     .sort((a, b) => (a.severity === 'fatal' ? 0 : 1) - (b.severity === 'fatal' ? 0 : 1) || (a.line ?? 0) - (b.line ?? 0))
   const shown = kept.slice(0, MAX)

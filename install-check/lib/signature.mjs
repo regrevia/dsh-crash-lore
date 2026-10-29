@@ -17,7 +17,8 @@ const SCHEMA_WORDS = new Set([
   'enum', 'default', 'title', 'additionalproperties', 'oneof', 'anyof', 'const',
 ])
 
-const PLAIN = /^[a-z][a-z0-9_]{1,48}$/
+// Tool names may be snake_case or camelCase; both can collide with another plugin's.
+const PLAIN = /^[a-z][A-Za-z0-9_]{1,63}$/
 
 function listJsFiles(dir, out = [], depth = 0) {
   if (depth > 6 || out.length >= MAX_FILES) return out
@@ -270,7 +271,21 @@ function routeCalls(tokens) {
  */
 function extractTools(text) {
   if (!/defineTool|registerTool|\bregister\b/.test(text)) return []
-  return toolCalls(tokenize(text)).filter((entry) => PLAIN.test(entry.name) && !SCHEMA_WORDS.has(entry.name))
+  const found = toolCalls(tokenize(text))
+  // A registration wrapped in a helper (`register(withOutput({ name: 'x' }))`) never hands
+  // the tokenizer a bare object literal, yet it registers a tool all the same.
+  const wrapped = /\.(?:register|registerTool|defineTool)\s*\(\s*(?:withOutput|wrap|with[A-Z]\w*)\s*\(\s*\{/g
+  for (const match of text.matchAll(wrapped)) {
+    const head = text.slice(match.index, match.index + 400)
+    const named = /\bname\s*:\s*['"]([A-Za-z][A-Za-z0-9_.-]{1,63})['"]/.exec(head)
+    if (named) found.push({ name: named[1], scoped: false })
+  }
+  const seen = new Set()
+  return found.filter((entry) => {
+    if (!PLAIN.test(entry.name) || SCHEMA_WORDS.has(entry.name) || seen.has(entry.name)) return false
+    seen.add(entry.name)
+    return true
+  })
 }
 
 /**

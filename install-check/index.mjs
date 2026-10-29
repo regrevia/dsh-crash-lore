@@ -25,6 +25,7 @@ import {
   renderVersion,
   renderVersionAudit,
 } from './lib/report.mjs'
+import { readRules } from '../core.mjs'
 import { implementationRisks, renderImplementation } from './lib/impl.mjs'
 import { overlapFindings, renderOverlap } from './lib/overlap.mjs'
 import { satisfies, versionVerdict } from './lib/compat.mjs'
@@ -80,6 +81,15 @@ function profileDir(ctx) {
   const profile = process.env.DSH_PROFILE
   if (profile) return join(homedir(), '.dsh', 'profiles', profile)
   return join(homedir(), '.dsh', 'profiles', 'desktop')
+}
+
+/** Rules this machine learned from its own crash logs; empty until it has learned some. */
+function learnedRules() {
+  try {
+    return readRules()
+  } catch {
+    return []
+  }
 }
 
 /** Files edited in place keep their path, so the fingerprint is what can change. */
@@ -323,7 +333,7 @@ function enabledCheck(call, profile, options) {
   const installed = installedPackages(profile)
   const result = compare(candidate, installed)
   const overlap = options.overlap === false ? [] : overlapFindings(candidate, installed)
-  const risks = options.impl === false ? [] : implementationRisks(dir)
+  const risks = options.impl === false ? [] : implementationRisks(dir, { rules: Array.isArray(options.rules) ? options.rules : learnedRules() })
   const text = mergeNotes(result.ok ? null : render(candidate, result), renderOverlap(overlap), renderImplementation(risks))
   if (!text) return null
   return { candidate, result, overlap, text }
@@ -394,7 +404,7 @@ export async function checkInstall(exec, options = {}) {
     // the profile asked for it.
     const overlap = options.overlap === false ? [] : overlapFindings(candidate, installed)
     // Same rule base as the preflight CLI, arriving at the install itself.
-    const risks = options.impl === false ? [] : implementationRisks(dir)
+    const risks = options.impl === false ? [] : implementationRisks(dir, { rules: Array.isArray(options.rules) ? options.rules : learnedRules() })
     // No shared name, no missing dependency — and still able to eat the window.
     const takeover = scanPackageClient(dir)
     const version = shellVersion()

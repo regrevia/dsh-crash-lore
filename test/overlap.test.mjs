@@ -71,6 +71,30 @@ test('two packages putting something in one slot outrank capability overlap', as
   assert.ok(findings.some((finding) => finding.kind === 'capability'))
 })
 
+test('a camelCase tool name is still a tool', async () => {
+  const one = await scan(spec('camel-use', ['browserOpenPage']))
+  const other = await scan(spec('snake-use', ['browser_open_page']))
+  assert.deepEqual(one.tools, ['browserOpenPage'])
+  assert.ok(capabilityWords(one).includes('browser'))
+  assert.deepEqual(overlapFindings(one, [other]).map((hit) => hit.kind), ['capability'])
+})
+
+test('a tool registered through a helper is still a tool', async () => {
+  const one = await scan({
+    manifest: { name: 'wrapped-use', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } },
+    files: {
+      'cordis.patch.yml': PATCH,
+      'index.js': [
+        'export function apply(ctx) {',
+        "  ctx.tools.register(withOutput({ name: 'memoryZettel', execute() {} }))",
+        '}',
+        '',
+      ].join('\n'),
+    },
+  })
+  assert.deepEqual(one.tools, ['memoryZettel'])
+})
+
 test('unrelated packages report nothing', async () => {
   const candidate = await scan(spec('alpha', ['memory_save']))
   const installed = await scan(spec('beta', ['browser_navigate']))

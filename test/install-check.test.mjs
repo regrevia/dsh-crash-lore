@@ -1001,7 +1001,8 @@ test('a candidate that would kill the host is named before the install', async (
   const profile = await profileWith(alpha)
   const target = await killsHost(root)
   const exec = { name: 'plugin_manager', arguments: { action: 'install_bundle', target } }
-  const checked = await checkInstall(exec, { profileDir: profile })
+  // Learned rules differ per machine; keep this assertion about the seed rules only.
+  const checked = await checkInstall(exec, { profileDir: profile, rules: [] })
   assert.equal(checked.risks.length, 1)
   assert.match(checked.text.zh, /装之前先读了源码/)
   assert.match(checked.text.zh, /process\.exit|退出/)

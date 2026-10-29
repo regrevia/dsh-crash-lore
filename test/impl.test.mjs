@@ -61,6 +61,25 @@ test('at most two findings, and the rest is counted not listed', async () => {
   assert.match(risks[1].zh, /另有 1 处/)
 })
 
+test('a rule learned from this machine\u2019s own crashes also guards the install', async () => {
+  const dir = await plugin({
+    'index.js': ['export function apply(ctx) {', '  setInterval(() => tick(), 1000)', '}', ''].join('\n'),
+  })
+  const rules = [
+    {
+      id: 'L001',
+      title: '定时器回调没兜异常',
+      severity: 'boot',
+      guard: { kind: 'source-regex', pattern: 'setInterval\\(', message: '定时器回调抛错没人接', fix: '回调里 try/catch' },
+    },
+  ]
+  assert.deepEqual(implementationRisks(dir), [], 'the seed rules do not know this shape')
+  const risks = implementationRisks(dir, { rules })
+  assert.equal(risks.length, 1)
+  assert.equal(risks[0].ruleId, 'L001')
+  assert.equal(risks[0].line, 2)
+})
+
 test('unreadable input never throws', async () => {
   assert.deepEqual(implementationRisks(null), [])
   assert.deepEqual(implementationRisks(join(tmpdir(), 'does-not-exist-impl-test')), [])
