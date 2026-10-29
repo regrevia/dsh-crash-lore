@@ -540,5 +540,23 @@
     "lastSeen": null,
     "incidentIds": [],
     "memoryId": null
+  },
+  {
+    "id": "R028",
+    "title": "大会话恢复会瞬间吃掉数 GB 堆：一次只恢复一个，用完重启清堆",
+    "signature": "session-restore",
+    "cause": "宿主启动/切页签时把会话记录整段反序列化常驻内存；单条记录 200–300 MB 的 JSONL 解析成对象后约占 1 GB，多个大会话同开即到 4 GB 上限，GC 直接 FATAL（young object promotion failed），日志里没有任何插件栈",
+    "fix": "一个任务一个会话；不要同时留多个大会话页签；长任务结束就重启宿主清堆；已归档的大记录不要再打开",
+    "guard": null,
+    "severity": "fatal",
+    "tags": [
+      "memory",
+      "session"
+    ],
+    "hits": 0,
+    "firstSeen": null,
+    "lastSeen": null,
+    "incidentIds": [],
+    "memoryId": null
   }
 ]
