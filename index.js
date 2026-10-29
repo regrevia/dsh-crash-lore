@@ -24,6 +24,7 @@ import {
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
 import { heapLine, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
+import { footprintLines, sessionFootprint } from './lib/sessions.mjs';
 import { crashLoops, loopLines } from './lib/attribute.mjs';
 import {
   MODE_LABELS,
@@ -249,6 +250,8 @@ export function apply(ctx, config = {}) {
       if (result.correlated) lines.push(`关联归因 ${result.correlated} 条：堆耗尽日志里没有插件栈，标成同一次运行前一条插件崩溃的来源。`);
       for (const line of loopLines(result.loops ?? [])) lines.push(line);
       lines.push(heapLine(watchdogStatus()));
+      const footprint = sessionFootprint(home);
+      for (const line of footprintLines(footprint)) lines.push(line);
       return {
         text: lines.join('\n'),
         added: result.added.length,
@@ -257,6 +260,7 @@ export function apply(ctx, config = {}) {
         correlated: result.correlated ?? 0,
         loops: result.loops ?? [],
         heap: watchdogStatus(),
+        sessions: footprint,
       };
     },
   })), 'crash-lore: crash_lore_scan');
@@ -652,6 +656,7 @@ export function apply(ctx, config = {}) {
       for (const line of loopLines(loops)) lines.push(line);
       const heap = watchdogStatus();
       lines.push(heapLine(heap));
+      for (const line of footprintLines(sessionFootprint(home))) lines.push(line);
       lines.push('覆盖不到：命令行直接写文件、外部编辑器保存、DSH 自身升级、已经装进去的代码在运行时崩。');
       if (note) lines.push(note);
       return { text: lines.join('\n'), ...info, denials: recent, note, heap, loops };
