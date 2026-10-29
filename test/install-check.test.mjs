@@ -981,6 +981,54 @@ test('enabling a package that collides is flagged before it turns on', async () 
   assert.match(text, /memory_save/)
 })
 
+async function nearNeighbour(profile, root) {
+  const beta = await fixture(root, {
+    manifest: { name: 'beta-memory', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } },
+    files: {
+      'cordis.patch.yml': ['- insert:', '    - id: beta-memory', '      name: beta-memory', ''].join('\n'),
+      'index.js': [
+        'export function apply(ctx) {',
+        "  ctx.tools.register(defineTool({ name: 'memory_note_save', description: 'same job' }))",
+        '}',
+        '',
+      ].join('\n'),
+    },
+  })
+  await cp(beta, join(profile, 'node_modules', 'beta-memory'), { recursive: true })
+  return { name: 'plugin_manager', token: 'enable-near', arguments: { action: 'set_bundle', enabled: true, target: 'beta-memory' } }
+}
+
+test('the same job under another name is called out before it turns on', async () => {
+  const { root, alpha } = await workspace()
+  const profile = await profileWith(alpha)
+  const exec = await nearNeighbour(profile, root)
+  const ctx = fakeContext()
+  apply(ctx)
+  const accept = async () => ({ kind: 'accept', content: [{ type: 'text', text: 'enabled' }] })
+  await withProfile(profile, () => ctx.handlers['tools/pre-execute'](exec, accept))
+  const after = await withProfile(profile, () =>
+    ctx.handlers['tools/post-execute'](exec, { isError: false, content: [] }, accept),
+  )
+  const text = after.content.map((item) => item.text).join('\n')
+  assert.match(text, /功能重叠/)
+  assert.match(text, /alpha-memory/)
+})
+
+test('overlap advice can be switched off without losing the other checks', async () => {
+  const { root, alpha } = await workspace()
+  const profile = await profileWith(alpha)
+  const exec = await nearNeighbour(profile, root)
+  const ctx = fakeContext()
+  apply(ctx, { overlap: false })
+  const accept = async () => ({ kind: 'accept', content: [{ type: 'text', text: 'enabled' }] })
+  await withProfile(profile, () => ctx.handlers['tools/pre-execute'](exec, accept))
+  const after = await withProfile(profile, () =>
+    ctx.handlers['tools/post-execute'](exec, { isError: false, content: [] }, accept),
+  )
+  const text = after.content.map((item) => item.text).join('\n')
+  assert.doesNotMatch(text, /功能重叠/)
+})
+
 test('a loader still moving keeps its answer open for the next look', async () => {
   const { resetShellVersion } = await import('../install-check/lib/shell.mjs')
   const { root, alpha } = await workspace()
@@ -1093,7 +1141,11 @@ test('an edited package is read again, not remembered', async () => {
     "export function apply(ctx) {\n  ctx.tools.register(defineTool({ name: 'memory_recall', description: 'save' }))\n}\n",
   )
   const second = await checkInstall(exec, { profileDir: profile })
-  assert.equal(second, null)
+  // The old name is gone, so this is no longer a collision; it is now the softer
+  // finding — same job under another name.
+  assert.equal(second.result.ok, true)
+  assert.doesNotMatch(second.text.zh, /同名工具/)
+  assert.match(second.text.zh, /功能重叠/)
 })
 
 test('a package already in the profile is read in place', async () => {

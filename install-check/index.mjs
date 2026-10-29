@@ -25,6 +25,7 @@ import {
   renderVersion,
   renderVersionAudit,
 } from './lib/report.mjs'
+import { overlapFindings, renderOverlap } from './lib/overlap.mjs'
 import { satisfies, versionVerdict } from './lib/compat.mjs'
 import { declaredRanges, shellVersion } from './lib/shell.mjs'
 import { inactive } from './lib/loader.mjs'
@@ -302,15 +303,28 @@ export function resetSkillWatch() {
   skillState.told.clear()
 }
 
+/** Notes arrive from separate checks; one check finding nothing must not hide another. */
+function mergeNotes(...notes) {
+  const kept = notes.filter(Boolean)
+  if (!kept.length) return null
+  return {
+    zh: kept.map((note) => note.zh).join('\n'),
+    en: kept.map((note) => note.en).join('\n'),
+  }
+}
+
 /** Enabling moves a package already in the profile; the copy there is the candidate. */
-function enabledCheck(call, profile) {
+function enabledCheck(call, profile, options) {
   const dir = join(profile, 'node_modules', call.target)
   if (!existsSync(join(dir, 'package.json'))) return null
   const candidate = scanPackage(dir)
   if (!candidate.isPlugin) return null
-  const result = compare(candidate, installedPackages(profile))
-  if (result.ok) return null
-  return { candidate, result, text: render(candidate, result) }
+  const installed = installedPackages(profile)
+  const result = compare(candidate, installed)
+  const overlap = options.overlap === false ? [] : overlapFindings(candidate, installed)
+  const text = mergeNotes(result.ok ? null : render(candidate, result), renderOverlap(overlap))
+  if (!text) return null
+  return { candidate, result, overlap, text }
 }
 
 /** A registry target whose exact copy is already in the profile is read in place. */
@@ -341,7 +355,7 @@ export async function checkInstall(exec, options = {}) {
   const profile = options.profileDir ?? profileDir()
   if (call.enable) {
     try {
-      return enabledCheck(call, profile)
+      return enabledCheck(call, profile, options)
     } catch {
       return null
     }
@@ -372,7 +386,11 @@ export async function checkInstall(exec, options = {}) {
     // plugin_manager rejects non-plugin specs on its own; don't add noise.
     if (!candidate.isPlugin) return null
 
-    const result = compare(candidate, installedPackages(profile))
+    const installed = installedPackages(profile)
+    const result = compare(candidate, installed)
+    // Function-level overlap: same job, different names. Advisory, and off when
+    // the profile asked for it.
+    const overlap = options.overlap === false ? [] : overlapFindings(candidate, installed)
     // No shared name, no missing dependency — and still able to eat the window.
     const takeover = scanPackageClient(dir)
     const version = shellVersion()
@@ -387,6 +405,11 @@ export async function checkInstall(exec, options = {}) {
       zh.push(note.zh)
       en.push(note.en)
     }
+    const close = renderOverlap(overlap)
+    if (close) {
+      zh.push(close.zh)
+      en.push(close.en)
+    }
     if (verdict === 'below' || verdict === 'above') {
       const note = renderVersion(verdict, version, range)
       zh.push(note.zh)
@@ -398,13 +421,13 @@ export async function checkInstall(exec, options = {}) {
       en.push(risk.en)
     }
     if (!zh.length) return null
-    return { candidate, result, text: { zh: zh.join('\n'), en: en.join('\n') } }
+    return { candidate, result, overlap, text: { zh: zh.join('\n'), en: en.join('\n') } }
   } finally {
     await cleanup()
   }
 }
 
-export function apply(ctx) {
+export function apply(ctx, options = {}) {
   const disposers = []
   const listen = (event, fn) => {
     const off = ctx.on(event, fn)
@@ -413,7 +436,7 @@ export function apply(ctx) {
   listen('tools/pre-execute', async (exec, next) => {
     if (exec?.name !== 'plugin_manager') return next()
     try {
-      const checked = await checkInstall(exec, { profileDir: profileDir(ctx) })
+      const checked = await checkInstall(exec, { profileDir: profileDir(ctx), overlap: options.overlap })
       if (!checked) return next()
       const slot = key(exec)
       if (slot !== null) {

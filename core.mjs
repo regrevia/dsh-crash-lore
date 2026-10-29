@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { correlateIncidents, crashLoops } from './lib/attribute.mjs';
 import { footprintBefore } from './lib/sessions.mjs';
 
-export const VERSION = '0.3.7';
+export const VERSION = '0.4.0';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 export function storeDir(home = DEFAULT_HOME) {
