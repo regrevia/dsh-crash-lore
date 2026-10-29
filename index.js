@@ -23,7 +23,7 @@ import {
   PROMPT_HEADER,
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
-import { heapLine, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
+import { heapLine, heapWarning, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
 import { footprintLines, oomEvidenceLines, sessionFootprint } from './lib/sessions.mjs';
 import { crashLoops, loopLines } from './lib/attribute.mjs';
 import {
@@ -207,7 +207,9 @@ export function apply(ctx, config = {}) {
       text: () => {
         try {
           const rules = readRules(home);
-          return renderLorePrompt(rules, { maxChars: promptBudget });
+          const lore = renderLorePrompt(rules, { maxChars: promptBudget });
+          /* A warning nobody reads is not a warning: the heap line rides into every step. */
+          return lore + heapWarning();
         } catch {
           return '';
         }

@@ -161,6 +161,22 @@ export function stopWatchdog() {
   active = null;
 }
 
+/**
+ * The sentence that has to reach the model while the host still has room: an alarm kept only in
+ * the status card is read by nobody until someone asks, and the wall does not wait to be asked.
+ * Empty below the warning line, so a healthy machine pays nothing.
+ */
+export function heapWarning(status = watchdogStatus(), options = {}) {
+  if (!status?.samples) return '';
+  const warnMB = options.warnMB ?? status.warnMB ?? 1800;
+  const criticalMB = options.criticalMB ?? status.criticalMB ?? 2800;
+  const alarmMB = status.alarm && !status.alarm.released ? status.alarm.heapMB : 0;
+  const hot = Math.max(status.heapMB ?? 0, alarmMB);
+  if (hot < warnMB) return '';
+  const trend = status.trendMBPerMin > 0 ? `，最近每分钟 +${status.trendMBPerMin} MB` : '';
+  return `【内存告警】本进程堆 ${status.heapMB} MB（峰值 ${status.peakMB} MB${trend}，${warnMB} MB 记警、约 ${criticalMB} MB 逼近上限）：先让用户重启宿主或关掉用不到的会话，再继续；这时不要恢复大会话，也不要新开长会话。`;
+}
+
 /** One status line: heap now, growth per minute, and the last alarm if any. */
 export function heapLine(status = watchdogStatus()) {
   if (!status?.samples) return '内存观测 未开始采样';

@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWatchdog, heapLine } from '../watchdog.mjs';
+import { createWatchdog, heapLine, heapWarning } from '../watchdog.mjs';
 
 function driven(values, stepMs = 20_000) {
   let index = 0;
@@ -87,4 +87,26 @@ test('footprint is sampled on its own slow cadence, not on every heap tick', () 
   for (let at = 0; at <= 6 * 60_000; at += 20_000) { watcher.sampleOnce(); clock += 20_000; }
   assert.ok(footprintCalls >= 1 && footprintCalls <= 2, `footprint walks: ${footprintCalls}`);
   assert.ok(footprintCalls < 7, 'a minute-by-minute walk would be 7 calls');
+});
+
+test('below the warning line the prompt stays clean', () => {
+  const run = driven([900, 1200]);
+  run.tick(); run.tick();
+  assert.equal(heapWarning(run.watcher.status()), '');
+});
+
+test('crossing the warning line puts one sentence into the prompt', () => {
+  const run = driven([1900, 2100]);
+  run.tick(); run.tick();
+  const line = heapWarning(run.watcher.status());
+  assert.match(line, /内存告警/);
+  assert.match(line, /2100 MB/);
+  assert.match(line, /重启宿主/);
+});
+
+test('an alarm keeps warning even after the heap drops back', () => {
+  const run = driven([2900, 2600]);
+  run.tick(); run.tick();
+  assert.equal(run.watcher.status().alarm.released, false);
+  assert.match(heapWarning(run.watcher.status()), /内存告警/);
 });
