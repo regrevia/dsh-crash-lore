@@ -10,11 +10,15 @@ function workspace() {
   const make = (project, id, packedMB, lockAgeMs) => {
     const dir = path.join(home, 'sessions', project, id);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'session.v4.jsonl.zstd'), Buffer.alloc(packedMB * 1024 * 1024, 1));
+    const transcript = path.join(dir, 'session.v4.jsonl.zstd');
+    fs.writeFileSync(transcript, Buffer.alloc(packedMB * 1024 * 1024, 1));
+    /* Age the transcript with the lock: a resumed session appends to the same file, so freshness
+     * is the newer of the two and a fixture that only ages one of them is not a stale session. */
     if (lockAgeMs !== null) {
+      const when = (Date.now() - lockAgeMs) / 1000;
+      fs.utimesSync(transcript, when, when);
       const lock = path.join(dir, 'session.lock');
       fs.writeFileSync(lock, '');
-      const when = (Date.now() - lockAgeMs) / 1000;
       fs.utimesSync(lock, when, when);
     }
     return dir;
@@ -53,7 +57,8 @@ test('estimate crosses the risk line only when enough heap is at stake', () => {
   const small = sessionFootprint(home);
   assert.equal(small.ceilingRisk, false);
   make('--proj--', 'session-big', 400, 60_000);
-  const big = sessionFootprint(home);
+  /* The dir list is cached for half an hour; a refresh is the documented way to see new dirs. */
+  const big = sessionFootprint(home, { indexTtlMs: 1 });
   assert.equal(big.ceilingRisk, true);
   assert.ok(big.estimateGB >= 2 && big.estimateGB < 9);
 });
