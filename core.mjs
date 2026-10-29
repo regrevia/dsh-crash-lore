@@ -323,7 +323,7 @@ function parseCrash(file, text) {
     message = errorText.slice(0, 400);
   } else if (kind === 'stack-overflow') {
     const deep = /file:\/\/([^\s:]+):(\d+)/.exec(errorText);
-    /* Cache-busted client modules import as `scrcpy.js?v=12`; the version is not part of the
+    /* Cache-busted client modules import as `plugin.js?v=12`; the version is not part of the
      * crash shape, so it must not split one bug into three incidents. */
     if (deep) stackFrame = { file: deep[1].split('?')[0], line: Number(deep[2]), raw: `file://${deep[1]}:${deep[2]}` };
     const where = stackFrame ? `${path.basename(stackFrame.file)}:${stackFrame.line}` : 'Maximum call stack size exceeded';
