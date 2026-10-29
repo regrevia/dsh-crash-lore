@@ -11,8 +11,9 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { correlateIncidents, crashLoops } from './lib/attribute.mjs';
+import { footprintBefore } from './lib/sessions.mjs';
 
-export const VERSION = '0.3.6';
+export const VERSION = '0.3.7';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 export function storeDir(home = DEFAULT_HOME) {
@@ -28,6 +29,7 @@ export function paths(home = DEFAULT_HOME) {
     state: path.join(dir, 'state.json'),
     quarantine: path.join(dir, 'quarantine.jsonl'),
     heap: path.join(dir, 'heap.jsonl'),
+    footprint: path.join(dir, 'footprint.jsonl'),
   };
 }
 
@@ -868,6 +870,19 @@ export function scan(options = {}) {
   if (bumped.size || migrated || attributed.correlated) rewriteIncidents(attributed.incidents, home);
   writeState(state, home);
   const loops = crashLoops(attributed.incidents, { now: options.now ?? Date.now() });
+  /* An OOM row can only say how loaded the machine was if a footprint was written before the death;
+   * the watchdog writes one each tick, so quote the newest sample older than the row itself. */
+  const oomEvidence = [];
+  for (const incident of attributed.incidents) {
+    if (incident.kind !== 'out-of-memory') continue;
+    let evidence = null;
+    try {
+      evidence = footprintBefore(home, incident.lastTs ?? incident.ts);
+    } catch {
+      evidence = null;
+    }
+    oomEvidence.push({ signature: incident.signature, ts: incident.ts, evidence });
+  }
   return {
     artifacts: artifacts.length,
     harvested,
@@ -878,6 +893,7 @@ export function scan(options = {}) {
     rules: rules.length,
     correlated: attributed.correlated,
     loops,
+    oomEvidence,
   };
 }
 

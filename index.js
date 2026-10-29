@@ -24,7 +24,7 @@ import {
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
 import { heapLine, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
-import { footprintLines, sessionFootprint } from './lib/sessions.mjs';
+import { footprintLines, oomEvidenceLines, sessionFootprint } from './lib/sessions.mjs';
 import { crashLoops, loopLines } from './lib/attribute.mjs';
 import {
   MODE_LABELS,
@@ -248,6 +248,9 @@ export function apply(ctx, config = {}) {
       if (!result.added.length && result.harvested) lines.push(`解析了 ${result.harvested} 个日志，没有新条目（与已有条目重复）。`);
       if (result.unknown.length) lines.push('未知形态先调 crash_lore_record 补规则，再调 crash_lore_export 写进长期记忆。');
       if (result.correlated) lines.push(`关联归因 ${result.correlated} 条：堆耗尽日志里没有插件栈，标成同一次运行前一条插件崩溃的来源。`);
+      for (const row of result.oomEvidence ?? []) {
+        for (const line of oomEvidenceLines(row.evidence)) lines.push(`  ${row.signature} — ${line}`);
+      }
       for (const line of loopLines(result.loops ?? [])) lines.push(line);
       lines.push(heapLine(watchdogStatus()));
       const footprint = sessionFootprint(home);

@@ -8,7 +8,9 @@
  * sample is dropped. Crossing the critical line records one alarm that survives the crash, so the
  * next run knows this plugin set has already been to the edge.
  */
+import v8 from 'node:v8';
 import { appendJsonl, paths, DEFAULT_HOME } from './core.mjs';
+import { recordFootprint } from './lib/sessions.mjs';
 
 const DEFAULTS = {
   intervalMs: 20_000,
@@ -45,10 +47,12 @@ export function createWatchdog(options = {}) {
       const usage = sample();
       const heapMB = megabytes(usage?.heapUsed);
       const rssMB = megabytes(usage?.rss);
+      // The ceiling itself, so a raised heap limit is verifiable at runtime instead of assumed.
+      const limitMB = megabytes(v8.getHeapStatistics().heap_size_limit);
       const stamp = clock();
       picks += 1;
       peakMB = Math.max(peakMB, heapMB);
-      ring.push({ t: new Date(stamp).toISOString(), heapMB, rssMB });
+      ring.push({ t: new Date(stamp).toISOString(), heapMB, rssMB, limitMB });
       if (ring.length > config.keep) ring.splice(0, ring.length - config.keep);
       if (heapMB >= config.criticalMB) {
         if (!alarm || alarm.released) alarm = { at: new Date(stamp).toISOString(), heapMB, released: false };
@@ -59,9 +63,12 @@ export function createWatchdog(options = {}) {
       lastTick = stamp;
       if (typeof config.persist === 'function' && stamp - lastPersist >= config.persistEveryMs) {
         lastPersist = stamp;
-        config.persist({ t: new Date(stamp).toISOString(), heapMB, rssMB, peakMB });
+        config.persist({ t: new Date(stamp).toISOString(), heapMB, rssMB, limitMB, peakMB });
+        /* Written while the host is still alive, so a later OOM row can quote how loaded the
+         * machine was; the scan never invents this number after the fact. */
+        if (typeof config.footprint === 'function') config.footprint(stamp);
       }
-      return { heapMB, rssMB };
+      return { heapMB, rssMB, limitMB };
     } catch {
       return null;
     }
@@ -107,10 +114,22 @@ function persistSample(home, sample) {
  */
 export function startWatchdog(home = DEFAULT_HOME, options = {}) {
   if (active?.running) return active;
-  const watcher = createWatchdog({ ...options, running: true, persist: (sample) => persistSample(home, sample) });
+  const watcher = createWatchdog({
+    ...options,
+    running: true,
+    persist: (sample) => persistSample(home, sample),
+    footprint: (stamp) => recordFootprint(home, { now: stamp }),
+  });
   active = watcher;
   /* First sample immediately: a restart after a crash should show the new baseline in the card. */
   watcher.sampleOnce();
+  /* One baseline footprint right away: a crash inside the first sampling minute still has a
+   * number to quote, and an idle machine costs one directory walk. */
+  try {
+    recordFootprint(home);
+  } catch {
+    /* best effort */
+  }
   try {
     const timer = setInterval(() => watched(), Number(watcher.config.intervalMs));
     timer.unref?.();
