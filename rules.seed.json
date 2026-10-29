@@ -506,8 +506,8 @@
   {
     "id": "R026",
     "title": "关闭路径要幂等：先置已销毁再 emit closed，否则 stop→closed→stop 无限递归",
-    "signature": "scrcpy",
-    "cause": "stop() 里先 emit('closed')，监听器又调 stop() 收尾设备资源；没收尾前状态没置位，两层调用互推，同步递归到栈溢出，宿主直接死",
+    "signature": "Maximum call stack size exceeded",
+    "cause": "stop()/close() 先 emit('closed')，监听器又调 stop() 收尾；状态未置位，两层互推，同步递归到栈溢出，宿主直接死（多见于会转发外部进程关闭事件的桥接模块）",
     "fix": "stop()/close() 先置 this._disposed（或 _stopping）再清理和 emit；重复调用直接 return；清理本身用 try/catch 兜住",
     "guard": null,
     "severity": "fatal",
