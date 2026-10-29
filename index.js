@@ -23,6 +23,8 @@ import {
   PROMPT_HEADER,
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
+import { heapLine, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
+import { crashLoops, loopLines } from './lib/attribute.mjs';
 import {
   MODE_LABELS,
   MODES,
@@ -156,8 +158,9 @@ export function apply(ctx, config = {}) {
     let alive = true;
     Promise.resolve()
       .then(() => {
-        /* First boot on a fresh profile: ship the checked-in rules, then import the corpus. */
-        if (!readRules(home).length) seedRules(home);
+        /* Ship the checked-in rules on every boot: the merge keeps local hit counts and adds rules
+         * that a newer build knows about, so an upgrade does not need a clean store. */
+        seedRules(home);
         importCorpus(home);
         return scan({ home });
       })
@@ -177,6 +180,17 @@ export function apply(ctx, config = {}) {
       alive = false;
     };
   }, 'crash-lore: boot scan');
+
+  /* Heap watchdog: passive, unref'd, never blocks. It cannot stop a V8 death, but it turns
+   * "the host vanished" into "the heap was at 2.9 GB and climbing" while the session is still alive. */
+  ctx.effect(() => {
+    try {
+      startWatchdog(home);
+    } catch (error) {
+      log(`内存观测未启动：${error?.message ?? error}`);
+    }
+    return () => stopWatchdog();
+  }, 'crash-lore: heap watchdog');
 
   /* Resident section: the compact lore, re-read on every step so a rule recorded mid-session
    * takes effect without a restart. */
@@ -232,11 +246,17 @@ export function apply(ctx, config = {}) {
       }
       if (!result.added.length && result.harvested) lines.push(`解析了 ${result.harvested} 个日志，没有新条目（与已有条目重复）。`);
       if (result.unknown.length) lines.push('未知形态先调 crash_lore_record 补规则，再调 crash_lore_export 写进长期记忆。');
+      if (result.correlated) lines.push(`关联归因 ${result.correlated} 条：堆耗尽日志里没有插件栈，标成同一次运行前一条插件崩溃的来源。`);
+      for (const line of loopLines(result.loops ?? [])) lines.push(line);
+      lines.push(heapLine(watchdogStatus()));
       return {
         text: lines.join('\n'),
         added: result.added.length,
         unknown: result.unknown.length,
         total: incidents.length,
+        correlated: result.correlated ?? 0,
+        loops: result.loops ?? [],
+        heap: watchdogStatus(),
       };
     },
   })), 'crash-lore: crash_lore_scan');
@@ -626,9 +646,15 @@ export function apply(ctx, config = {}) {
       } else if (info.capability !== 'off') {
         lines.push('最近没有拒绝记录');
       }
-      lines.push('覆盖不到：命令行直接写文件、外部编辑器保存、DSH 自身升级。');
+      /* Runtime picture next to the write gate: a heap that is already at the edge and a plugin
+       * that already died repeatedly are the two facts the write gate cannot see. */
+      const loops = crashLoops(readIncidents(home), { now: Date.now() });
+      for (const line of loopLines(loops)) lines.push(line);
+      const heap = watchdogStatus();
+      lines.push(heapLine(heap));
+      lines.push('覆盖不到：命令行直接写文件、外部编辑器保存、DSH 自身升级、已经装进去的代码在运行时崩。');
       if (note) lines.push(note);
-      return { text: lines.join('\n'), ...info, denials: recent, note };
+      return { text: lines.join('\n'), ...info, denials: recent, note, heap, loops };
     },
   })), 'crash-lore: crash_lore_guard');
 

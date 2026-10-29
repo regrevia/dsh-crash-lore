@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { correlateIncidents, crashLoops } from './lib/attribute.mjs';
 
 export const VERSION = '0.3.2';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
@@ -26,6 +27,7 @@ export function paths(home = DEFAULT_HOME) {
     rules: path.join(dir, 'rules.json'),
     state: path.join(dir, 'state.json'),
     quarantine: path.join(dir, 'quarantine.jsonl'),
+    heap: path.join(dir, 'heap.jsonl'),
   };
 }
 
@@ -851,20 +853,32 @@ export function scan(options = {}) {
 
   if (added.length) writeRules(rules, home);
   const migrated = stored.some((incident, at) => JSON.stringify(incident) !== JSON.stringify(rawStored[at] ?? {}));
-  if (bumped.size || migrated) {
-    /* Persist the bumped aggregate (count, lastTs, per-event identity). */
-    const fresh = readIncidents(home).map(normalizeOccurrence);
-    const byId = new Map(fresh.map((incident) => [incident.id, incident]));
-    /* Mutated rows may be freshly added in this run (not yet reflected in the file read above) or
-     * already-stored rows; `known` holds the live object for both, so persist from there. */
-    for (const incident of known.values()) {
-      if (!incident?.id || !bumped.has(incident.id)) continue;
-      byId.set(incident.id, incident);
-    }
-    rewriteIncidents([...byId.values()], home);
+  /* Attribution pass over the whole store, not just this run's rows: a heap death that carried no
+   * plugin stack learns its plugin from a plugin crash minutes earlier. Rows already correlated are
+   * left as they are, so repeated scans converge instead of re-labelling. */
+  const persisted = readIncidents(home).map(normalizeOccurrence);
+  const byId = new Map(persisted.map((incident) => [incident.id, incident]));
+  /* Mutated rows may be freshly added in this run (not yet reflected in the file read above) or
+   * already-stored rows; `known` holds the live object for both, so persist from there. */
+  for (const incident of known.values()) {
+    if (!incident?.id || !bumped.has(incident.id)) continue;
+    byId.set(incident.id, incident);
   }
+  const attributed = correlateIncidents([...byId.values()]);
+  if (bumped.size || migrated || attributed.correlated) rewriteIncidents(attributed.incidents, home);
   writeState(state, home);
-  return { artifacts: artifacts.length, harvested, added, unknown, bumped: bumped.size, known: added.length - unknown.length, rules: rules.length };
+  const loops = crashLoops(attributed.incidents, { now: options.now ?? Date.now() });
+  return {
+    artifacts: artifacts.length,
+    harvested,
+    added,
+    unknown,
+    bumped: bumped.size,
+    known: added.length - unknown.length,
+    rules: rules.length,
+    correlated: attributed.correlated,
+    loops,
+  };
 }
 
 /* ------------------------------------------------------------------ render */
@@ -894,7 +908,7 @@ export function renderLorePrompt(rules, options = {}) {
 /* ------------------------------------------------------------------ helpers */
 
 export function summarizeIncident(incident) {
-  const culprit = incident.culprit?.name ? ` @${incident.culprit.name}` : '';
+  const culprit = incident.culprit?.name ? ` @${incident.culprit.name}${incident.inferred ? '（关联归因）' : ''}` : '';
   return `${incident.kind}${culprit} · ${incident.signature}${incident.frame ? ` (${incident.frame})` : ''}`;
 }
 

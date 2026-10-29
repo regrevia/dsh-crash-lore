@@ -502,5 +502,43 @@
     "lastSeen": "2026-10-28T21:40:08.215Z",
     "incidentIds": [],
     "memoryId": null
+  },
+  {
+    "id": "R026",
+    "title": "关闭路径要幂等：先置已销毁再 emit closed，否则 stop→closed→stop 无限递归",
+    "signature": "scrcpy",
+    "cause": "stop() 里先 emit('closed')，监听器又调 stop() 收尾设备资源；没收尾前状态没置位，两层调用互推，同步递归到栈溢出，宿主直接死",
+    "fix": "stop()/close() 先置 this._disposed（或 _stopping）再清理和 emit；重复调用直接 return；清理本身用 try/catch 兜住",
+    "guard": null,
+    "severity": "fatal",
+    "tags": [
+      "lifecycle",
+      "recursion",
+      "cleanup"
+    ],
+    "hits": 0,
+    "firstSeen": null,
+    "lastSeen": null,
+    "incidentIds": [],
+    "memoryId": null
+  },
+  {
+    "id": "R027",
+    "title": "同一插件反复把宿主带走：先停用再修，不要带着它重启",
+    "signature": "crash-loop",
+    "cause": "插件缺陷在启动或首次调用时必现，每次重启都再崩一次，消耗的是同一台机器和同一份日志，修之前重启只会重复事故",
+    "fix": "crash_lore_heal 停用该插件；从源码改掉触发点、crash_lore_check 预检通过后再启用；别把崩溃循环当偶发",
+    "guard": null,
+    "severity": "fatal",
+    "tags": [
+      "loop",
+      "heal",
+      "triage"
+    ],
+    "hits": 0,
+    "firstSeen": null,
+    "lastSeen": null,
+    "incidentIds": [],
+    "memoryId": null
   }
 ]

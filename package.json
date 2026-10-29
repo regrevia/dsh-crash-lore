@@ -12,7 +12,8 @@
     "./icon": "./icon.svg",
     "./defense": "./defense.mjs",
     "./state": "./state.mjs",
-    "./lib/*": "./lib/*.mjs"
+    "./lib/*": "./lib/*.mjs",
+    "./watchdog": "./watchdog.mjs"
   },
   "bin": {
     "crash-lore": "./cli.mjs"
@@ -26,6 +27,7 @@
     "memory.mjs",
     "doctor.mjs",
     "state.mjs",
+    "watchdog.mjs",
     "lib/*.mjs",
     "rules.seed.json",
     "cordis.patch.yml",
