@@ -19,6 +19,9 @@ const DEFAULTS = {
   releaseRatio: 0.6,
   keep: 180,
   persistEveryMs: 60_000,
+  /* A directory walk over every session is ~100 ms on a large tree: sample it on a slow cadence
+   * instead of every heap tick, so the watchdog stays a rounding error in the host. */
+  footprintEveryMs: 5 * 60_000,
   keepPersisted: 1200,
 };
 
@@ -38,6 +41,7 @@ export function createWatchdog(options = {}) {
   const startedAt = clock();
   let lastTick = startedAt;
   let lastPersist = startedAt;
+  let lastFootprint = startedAt;
   let peakMB = 0;
   let alarm = null;
   let picks = 0;
@@ -66,7 +70,10 @@ export function createWatchdog(options = {}) {
         config.persist({ t: new Date(stamp).toISOString(), heapMB, rssMB, limitMB, peakMB });
         /* Written while the host is still alive, so a later OOM row can quote how loaded the
          * machine was; the scan never invents this number after the fact. */
-        if (typeof config.footprint === 'function') config.footprint(stamp);
+        if (typeof config.footprint === 'function' && stamp - lastFootprint >= config.footprintEveryMs) {
+          lastFootprint = stamp;
+          config.footprint(stamp);
+        }
       }
       return { heapMB, rssMB, limitMB };
     } catch {

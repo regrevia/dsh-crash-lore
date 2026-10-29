@@ -71,3 +71,20 @@ test('scrollback stays bounded', () => {
   assert.equal(status.samples, 400);
   assert.equal(run.watcher.config.keep, 180);
 });
+
+test('footprint is sampled on its own slow cadence, not on every heap tick', () => {
+  let clock = Date.parse('2026-10-29T00:00:00.000Z');
+  let footprintCalls = 0;
+  const watcher = createWatchdog({
+    sample: () => ({ heapUsed: 500 * 1024 * 1024, rss: 900 * 1024 * 1024 }),
+    now: () => clock,
+    persist: () => {},
+    footprint: () => { footprintCalls += 1; },
+    persistEveryMs: 20_000,
+  });
+  /* Six minutes of ticks: the first sample at the zero mark is inside the initial window, so the
+   * walk happens on the following tick that crosses the 5-minute line, not every minute. */
+  for (let at = 0; at <= 6 * 60_000; at += 20_000) { watcher.sampleOnce(); clock += 20_000; }
+  assert.ok(footprintCalls >= 1 && footprintCalls <= 2, `footprint walks: ${footprintCalls}`);
+  assert.ok(footprintCalls < 7, 'a minute-by-minute walk would be 7 calls');
+});
