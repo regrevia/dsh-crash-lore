@@ -16,12 +16,21 @@
 - 新增 `config.overlapCheck`（默认开）：只关这块建议，`installCheck` 的其余检查与 `mode` 语义不变。
 - 文案说清后果与动作：「两套同时开容易抢同一份输入输出，效果变差，真出问题也分不清是谁；装之前先决定要不要留一个」。
 
+## 名字之后，再读实现
+
+功能重叠靠领域词，是猜。装之前再读一遍候选源码，只报会直接带走宿主或让激活失败的写法：顶层 `throw`、顶层裸 `await`、`process.exit`、接管退出信号、patch 引用未声明的包、同 id 重复 etc. 规则库与 `cli.mjs check` 完全同一套（`lib/judge.mjs`），所以备注里的规则号和行号与手工预检一致；最多两条，其余只计数。
+
+- 静态读文本，不执行插件、不联网、不写盘；读不到就静默。
+- 运行期才出现的竞态、两个插件抢同一份状态，不在本版能力内，文案不承诺。
+- 开关 `config.implCheck`（默认开），与 `overlapCheck` 互不影响。
+
 ## 用例
 
+`test/impl.test.mjs`（5 条）：致命写法带行号、顶层 throw、干净包不报、最多两条并计数、读不到不抛。
 `test/overlap.test.mjs`（7 条）：拆词与去噪、异名同功能、同 slot 排序、无关包不报、不与自己比、最多 3 条、非插件不比。
-`test/install-check.test.mjs` 增 2 条：启用时给出重叠建议；`overlap: false` 时该建议消失而其他检查仍在。原「同名工具消失后应静默」的用例改为断言更软的那条建议。
+`test/install-check.test.mjs` 增 4 条：启用时给出重叠建议；`overlap: false` 时该建议消失而其他检查仍在；安装时点名会带走宿主的候选；`impl: false` 时静默。原「同名工具消失后应静默」的用例改为断言更软的那条建议。
 
-全量 `node --test test/*.test.mjs`：176 通过 / 0 失败。`node cli.mjs check .`：预检通过。
+全量 `node --test test/*.test.mjs`：183 通过 / 0 失败。`node cli.mjs check .`：预检通过。
 
 ## 边界
 

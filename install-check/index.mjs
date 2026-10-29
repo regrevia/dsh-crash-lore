@@ -25,6 +25,7 @@ import {
   renderVersion,
   renderVersionAudit,
 } from './lib/report.mjs'
+import { implementationRisks, renderImplementation } from './lib/impl.mjs'
 import { overlapFindings, renderOverlap } from './lib/overlap.mjs'
 import { satisfies, versionVerdict } from './lib/compat.mjs'
 import { declaredRanges, shellVersion } from './lib/shell.mjs'
@@ -322,7 +323,8 @@ function enabledCheck(call, profile, options) {
   const installed = installedPackages(profile)
   const result = compare(candidate, installed)
   const overlap = options.overlap === false ? [] : overlapFindings(candidate, installed)
-  const text = mergeNotes(result.ok ? null : render(candidate, result), renderOverlap(overlap))
+  const risks = options.impl === false ? [] : implementationRisks(dir)
+  const text = mergeNotes(result.ok ? null : render(candidate, result), renderOverlap(overlap), renderImplementation(risks))
   if (!text) return null
   return { candidate, result, overlap, text }
 }
@@ -391,6 +393,8 @@ export async function checkInstall(exec, options = {}) {
     // Function-level overlap: same job, different names. Advisory, and off when
     // the profile asked for it.
     const overlap = options.overlap === false ? [] : overlapFindings(candidate, installed)
+    // Same rule base as the preflight CLI, arriving at the install itself.
+    const risks = options.impl === false ? [] : implementationRisks(dir)
     // No shared name, no missing dependency — and still able to eat the window.
     const takeover = scanPackageClient(dir)
     const version = shellVersion()
@@ -410,6 +414,11 @@ export async function checkInstall(exec, options = {}) {
       zh.push(close.zh)
       en.push(close.en)
     }
+    const deadly = renderImplementation(risks)
+    if (deadly) {
+      zh.push(deadly.zh)
+      en.push(deadly.en)
+    }
     if (verdict === 'below' || verdict === 'above') {
       const note = renderVersion(verdict, version, range)
       zh.push(note.zh)
@@ -421,7 +430,7 @@ export async function checkInstall(exec, options = {}) {
       en.push(risk.en)
     }
     if (!zh.length) return null
-    return { candidate, result, overlap, text: { zh: zh.join('\n'), en: en.join('\n') } }
+    return { candidate, result, overlap, risks, text: { zh: zh.join('\n'), en: en.join('\n') } }
   } finally {
     await cleanup()
   }
@@ -436,7 +445,7 @@ export function apply(ctx, options = {}) {
   listen('tools/pre-execute', async (exec, next) => {
     if (exec?.name !== 'plugin_manager') return next()
     try {
-      const checked = await checkInstall(exec, { profileDir: profileDir(ctx), overlap: options.overlap })
+      const checked = await checkInstall(exec, { profileDir: profileDir(ctx), overlap: options.overlap, impl: options.impl })
       if (!checked) return next()
       const slot = key(exec)
       if (slot !== null) {

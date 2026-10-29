@@ -106,6 +106,7 @@ function makeConfig() {
       monitorOnly: z.boolean().description('旧开关，等价于 mode=observe'),
       installCheck: z.boolean().default(true).description('装插件前先跟已装的比一遍：重名、缺依赖、版本、skill 撞车'),
       overlapCheck: z.boolean().default(true).description('装插件时提示和已装插件的功能重叠（同一个位置、同一类能力）'),
+      implCheck: z.boolean().default(true).description('装插件前读一遍候选源码：会不会一激活就带走宿主'),
     });
   } catch {
     return undefined;
@@ -585,7 +586,7 @@ export function apply(ctx, config = {}) {
 
   /* 静态安装体检：装之前跟已装的比一遍（只加备注，不拦安装）。关掉防御时一并关闭。 */
   if (config.installCheck !== false && modeOfConfig(config) !== 'off') {
-    ctx.effect(() => applyInstallCheck(ctx, { overlap: config.overlapCheck !== false }), 'crash-lore: install check');
+    ctx.effect(() => applyInstallCheck(ctx, { overlap: config.overlapCheck !== false, impl: config.implCheck !== false }), 'crash-lore: install check');
   }
 
   /* Mode is the only writable knob, and it is written through the DSH config editor, so

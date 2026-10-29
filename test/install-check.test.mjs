@@ -981,6 +981,41 @@ test('enabling a package that collides is flagged before it turns on', async () 
   assert.match(text, /memory_save/)
 })
 
+async function killsHost(root) {
+  return fixture(root, {
+    manifest: {
+      name: 'killer',
+      version: '1.0.0',
+      dependencies: { killer: '1.0.0' },
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    },
+    files: {
+      'cordis.patch.yml': ['- insert:', '    - id: killer', '      name: killer', ''].join('\n'),
+      'index.js': ['export function apply(ctx) {', '  ctx.on("ready", () => process.exit(0))', '}', ''].join('\n'),
+    },
+  })
+}
+
+test('a candidate that would kill the host is named before the install', async () => {
+  const { root, alpha } = await workspace()
+  const profile = await profileWith(alpha)
+  const target = await killsHost(root)
+  const exec = { name: 'plugin_manager', arguments: { action: 'install_bundle', target } }
+  const checked = await checkInstall(exec, { profileDir: profile })
+  assert.equal(checked.risks.length, 1)
+  assert.match(checked.text.zh, /装之前先读了源码/)
+  assert.match(checked.text.zh, /process\.exit|退出/)
+})
+
+test('the source read can be switched off on its own', async () => {
+  const { root, alpha } = await workspace()
+  const profile = await profileWith(alpha)
+  const target = await killsHost(root)
+  const exec = { name: 'plugin_manager', arguments: { action: 'install_bundle', target } }
+  const checked = await checkInstall(exec, { profileDir: profile, impl: false })
+  assert.equal(checked, null)
+})
+
 async function nearNeighbour(profile, root) {
   const beta = await fixture(root, {
     manifest: { name: 'beta-memory', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } },
