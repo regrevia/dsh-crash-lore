@@ -82,8 +82,10 @@ export async function boot({ home, profileDir, config = {} }) {
       if (typeof disposer === 'function') disposers.push(disposer);
       return typeof disposer === 'function' ? disposer : () => {};
     },
+    /* A real host fans one event out to every listener; keep them all and chain them so a
+     * handler registered later cannot hide an earlier one (the refusal must still be heard). */
     on(name, fn) {
-      handlers[name] = fn;
+      (handlers[name] ??= []).push(fn);
       return () => {};
     },
     tools: {
@@ -106,7 +108,15 @@ export async function boot({ home, profileDir, config = {} }) {
     handlers,
     guardTool: registered.get('lifeguard_guard'),
     callGuard: (exec) => (guards[0] ? guards[0](exec) : undefined),
-    callPre: (exec, next = async () => ({ kind: 'next' })) => (handlers['tools/pre-execute'] ? handlers['tools/pre-execute'](exec, next) : next()),
+    callPre: (exec, next = async () => ({ kind: 'next' })) => {
+      const chain = handlers['tools/pre-execute'] ?? [];
+      const run = (index) => {
+        const fn = chain[index];
+        if (!fn) return next();
+        return fn(exec, () => run(index + 1));
+      };
+      return run(0);
+    },
     dispose() {
       for (const fn of disposers.splice(0)) {
         try {
