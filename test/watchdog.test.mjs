@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWatchdog, heapLine, heapWarning } from '../watchdog.mjs';
+import { createWatchdog, heapLine, heapPressure, heapWarning } from '../watchdog.mjs';
 
 function driven(values, stepMs = 20_000) {
   let index = 0;
@@ -109,4 +109,16 @@ test('an alarm keeps warning even after the heap drops back', () => {
   run.tick(); run.tick();
   assert.equal(run.watcher.status().alarm.released, false);
   assert.match(heapWarning(run.watcher.status()), /内存告警/);
+});
+
+test('percent is against the wall that kills, not the nominal limit', () => {
+  const run = driven([2698, 3529]);
+  run.tick();
+  const live = run.watcher.status();
+  assert.equal(heapPressure(live, { crashMB: 3529 }).pct, 76);
+  assert.equal(heapPressure({ ...live, heapMB: 3529 }, { crashMB: 3529 }).pct, 100);
+  /* No crash on record: fall back to a 15% margin under the reported limit. */
+  const guess = heapPressure(live, { limitMB: 4192 });
+  assert.equal(guess.basis, 'margin');
+  assert.equal(guess.wallMB, 3563);
 });

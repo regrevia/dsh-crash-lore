@@ -23,7 +23,7 @@ import {
   PROMPT_HEADER,
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
-import { heapLine, heapWarning, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
+import { heapLine, heapPressure, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
 import { footprintLines, oomEvidenceLines, sessionFootprint } from './lib/sessions.mjs';
 import { crashLoops, loopLines } from './lib/attribute.mjs';
 import {
@@ -107,6 +107,7 @@ function makeConfig() {
       installCheck: z.boolean().default(true).description('装插件前先跟已装的比一遍：重名、缺依赖、版本、skill 撞车'),
       overlapCheck: z.boolean().default(true).description('装插件时提示和已装插件的功能重叠（同一个位置、同一类能力）'),
       implCheck: z.boolean().default(true).description('装插件前读一遍候选源码：会不会一激活就带走宿主'),
+      healthBadge: z.boolean().default(true).description('输入框下方显示内存占用状态圈，接近崩溃上限时变红'),
     });
   } catch {
     return undefined;
@@ -140,6 +141,38 @@ function log(message) {
     console.log(`[crash-lore] ${message}`);
   } catch {
     /* console gone during shutdown */
+  }
+}
+
+/* The wall that actually kills this machine, read from its own crash log: V8 dies in old space
+ * before the nominal limit, so the badge counts against the observed death heap, not the limit. */
+let crashWallCache = null;
+function crashWallMB(home) {
+  if (crashWallCache !== null) return crashWallCache;
+  let wall = 0;
+  try {
+    for (const incident of readIncidents(home)) {
+      const match = /heap\s+(\d+)\s*MB/.exec(String(incident?.signature ?? ''));
+      const heap = match ? Number(match[1]) : 0;
+      if (heap > wall) wall = heap;
+    }
+  } catch {
+    /* an unreadable store must not take down the badge */
+  }
+  crashWallCache = wall;
+  return wall;
+}
+
+/* One allocation-free reading for the composer badge. The figure stays out of prompts. */
+function healthPayload(home) {
+  try {
+    const status = watchdogStatus();
+    const pressure = heapPressure(status, { limitMB: status?.limitMB, crashMB: crashWallMB(home) });
+    const row = { enabled: true, pct: pressure.pct, wallMB: pressure.wallMB, basis: pressure.basis };
+    Object.assign(row, { heapMB: status?.heapMB ?? 0, peakMB: status?.peakMB ?? 0, limitMB: status?.limitMB ?? 0 });
+    return row;
+  } catch {
+    return { enabled: true, pct: 0, wallMB: 0, basis: 'none', heapMB: 0, peakMB: 0, limitMB: 0 };
   }
 }
 
@@ -195,6 +228,50 @@ export function apply(ctx, config = {}) {
     return () => stopWatchdog();
   }, 'crash-lore: heap watchdog');
 
+  /* Health badge route: the composer ring polls it, so the same reading reaches the person as an
+   * always-visible indicator instead of a line in every prompt. Turning the badge off removes the
+   * route too — an off switch on the screen should not leave a live endpoint behind. */
+  if (config.healthBadge !== false) {
+    ctx.effect(() => {
+      const server = serviceOf(ctx, 'webServer');
+      if (!server || typeof server.register !== 'function') {
+        log('没有 webServer 服务，本轮不提供内存状态圈');
+        return () => {};
+      }
+      let dispose;
+      try {
+        dispose = server.register({
+          kind: 'exact',
+          path: '/crash-lore/health',
+          handler: (req, res) => {
+            let body = '{"enabled":false}';
+            try {
+              body = JSON.stringify(healthPayload(home));
+            } catch {
+              /* keep the disabled body */
+            }
+            try {
+              res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+              res.end(body);
+            } catch {
+              /* the socket went away before we answered */
+            }
+          },
+        });
+      } catch (error) {
+        log(`内存状态圈未挂上：${error?.message ?? error}`);
+        return () => {};
+      }
+      return () => {
+        try {
+          if (typeof dispose === 'function') dispose();
+        } catch {
+          /* already released */
+        }
+      };
+    }, 'crash-lore: health badge');
+  }
+
   /* Resident section: the compact lore, re-read on every step so a rule recorded mid-session
    * takes effect without a restart. */
   const prompt = serviceOf(ctx, 'systemPrompt');
@@ -207,9 +284,7 @@ export function apply(ctx, config = {}) {
       text: () => {
         try {
           const rules = readRules(home);
-          const lore = renderLorePrompt(rules, { maxChars: promptBudget });
-          /* A warning nobody reads is not a warning: the heap line rides into every step. */
-          return lore + heapWarning();
+          return renderLorePrompt(rules, { maxChars: promptBudget });
         } catch {
           return '';
         }

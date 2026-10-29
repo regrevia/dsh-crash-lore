@@ -554,7 +554,7 @@ export function preflight(dir, options = {}) {
     if (/process\.on\s*\(\s*['"](?:exit|SIGTERM|SIGINT)['"]/.test(text)) {
       findings.push(finding('fatal', 'P019', '插件接管了宿主退出信号', rel, lineOf(text, text.search(/process\.on\s*\(\s*['"](?:exit|SIGTERM|SIGINT)/)), '抢退出信号会和宿主的清理打架', '用 ctx.effect 的 disposer 做清理'));
     }
-    if (isClient && !/(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+(?:apply|activate)\b/.test(text) && !/ctx\.effect\s*\(/.test(text)) {
+    if (isClient && !/(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+(?:apply|activate)\b/.test(text) && !/(?:^|\n)\s*(?:apply|activate)\s*\(/.test(text) && !/ctx\.effect\s*\(/.test(text)) {
       findings.push(finding('boot', 'P020', 'client 入口没有 apply/activate', rel, 1, 'client 插件没导出激活入口时 boot 会整体失败', '导出 apply(ctx) 或在 ctx.effect 里注册'));
     }
 
@@ -587,7 +587,7 @@ export function preflight(dir, options = {}) {
     /* services: plain property reads throw on undeclared services */
     const serviceReads = [...text.matchAll(/ctx\.([a-z][A-Za-z0-9_]*)\b(?!\s*\))/g)]
       .map((m) => m[1])
-      .filter((key) => !['effect', 'get', 'set', 'on', 'off', 'emit', 'inject', 'logger', 'root', 'scope', 'plugin', 'dispose', 'start', 'stop', 'emitEvent'].includes(key));
+      .filter((key) => !['effect', 'get', 'set', 'on', 'off', 'emit', 'inject', 'logger', 'root', 'scope', 'plugin', 'dispose', 'start', 'stop', 'emitEvent', 'slots'].includes(key));
     if (serviceReads.length && !/try\s*\{/.test(text) && !/ctx\.get\s*\(/.test(text)) {
       findings.push(finding('boot', 'P030', '直接读 ctx 服务但没有兜底', rel, 1, `读了 ${[...new Set(serviceReads)].slice(0, 3).join('、')}；服务未声明时读取会抛错`, '用 try/catch 或 ctx.get(name) 读服务'));
     }

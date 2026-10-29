@@ -92,6 +92,7 @@ export function createWatchdog(options = {}) {
       heapMB: latest?.heapMB ?? 0,
       rssMB: latest?.rssMB ?? 0,
       peakMB,
+      limitMB: latest?.limitMB ?? 0,
       trendMBPerMin,
       since: new Date(startedAt).toISOString(),
       warnMB: config.warnMB,
@@ -174,7 +175,23 @@ export function heapWarning(status = watchdogStatus(), options = {}) {
   const hot = Math.max(status.heapMB ?? 0, alarmMB);
   if (hot < warnMB) return '';
   const trend = status.trendMBPerMin > 0 ? `，最近每分钟 +${status.trendMBPerMin} MB` : '';
-  return `【内存告警】本进程堆 ${status.heapMB} MB（峰值 ${status.peakMB} MB${trend}，${warnMB} MB 记警、约 ${criticalMB} MB 逼近上限）：先让用户重启宿主或关掉用不到的会话，再继续；这时不要恢复大会话，也不要新开长会话。`;
+  return `【内存告警】本进程堆 ${status.heapMB} MB（峰值 ${status.peakMB} MB${trend}，${warnMB} MB 记警、约 ${criticalMB} MB 逼近上限）：先把还没完的会话收尾、重启宿主把内存拿回来，再继续；这时不要恢复大会话，也不要新开长会话。`;
+}
+
+/**
+ * How close this process is to the wall that actually kills, in percent. `heap_size_limit` is only
+ * an upper bound — V8 aborts when old space runs out first, which is earlier — so 100% has to mean
+ * "dies here". Calibrate against the heap a real OOM was recorded at on this machine; with no
+ * history, keep a 15% margin. The wall differs per machine, the calibration does not.
+ */
+export function heapPressure(status = watchdogStatus(), options = {}) {
+  if (!status?.samples) return { pct: 0, wallMB: 0, basis: 'none' };
+  const limitMB = Number(options.limitMB ?? status.limitMB ?? 0);
+  const crashMB = Number(options.crashMB ?? status.crashMB ?? 0);
+  const basis = crashMB > 0 ? 'crash' : 'margin';
+  const wallMB = crashMB > 0 ? Math.round(crashMB) : Math.round(limitMB * 0.85);
+  const pct = wallMB > 0 ? Math.round(((status.heapMB ?? 0) / wallMB) * 100) : 0;
+  return { pct, wallMB, basis };
 }
 
 /** One status line: heap now, growth per minute, and the last alarm if any. */

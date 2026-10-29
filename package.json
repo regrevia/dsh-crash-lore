@@ -13,7 +13,8 @@
     "./defense": "./defense.mjs",
     "./state": "./state.mjs",
     "./lib/*": "./lib/*.mjs",
-    "./watchdog": "./watchdog.mjs"
+    "./watchdog": "./watchdog.mjs",
+    "./client": "./client.js"
   },
   "bin": {
     "crash-lore": "./cli.mjs"
@@ -28,6 +29,7 @@
     "doctor.mjs",
     "state.mjs",
     "watchdog.mjs",
+    "client.js",
     "lib/*.mjs",
     "rules.seed.json",
     "cordis.patch.yml",
@@ -39,6 +41,10 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
     }
   },
   "engines": {
