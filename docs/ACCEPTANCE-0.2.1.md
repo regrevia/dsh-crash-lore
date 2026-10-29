@@ -1,6 +1,6 @@
 # dsh-crash-lore 0.2.1 独立验收报告（Agent C）
 
-- 验收对象：`/Users/apple/Desktop/DSH/dsh-crash-lore`，version `0.2.1`，以 `link:` 装入真实宿主 profile `~/.dsh/profiles/desktop`。
+- 验收对象：`<repo>`，version `0.2.1`，以 `link:` 装入真实宿主 profile `~/.dsh/profiles/desktop`。
 - 验收时间：2026-10-28T23:49:38+08:00 ～ 2026-10-29T00:03+08:00（UTC 记录见各 JSON 的 `at`）。中间 A 先落盘 guard.mjs 批量语法检查（23:54），再按 Lead 决定落盘安装路径 fail-closed（00:00）；**产品代码 2026-10-29 00:01 起正式冻结**，本报告数字均为冻结后快照。历史数据与新数据分两段记录。
 - 最终判定：**自动门禁通过 / 真机加载激活 PASS（第 9 项）/ 真机进程内拦截 PASS（第 10 项）/ 真机目标解析 PASS（第 15 项）/ 交互式真机未验证**。矩阵 29 PASS / 0 FAIL / 0 XFAIL、`npm test` 92/92、`verify` 6/6、冷装 28/28、extras 5/5、adversarial 6/6（exit 0）全绿；第 10 项补上「真实宿主进程里的 guard 决策 + 拒绝载荷 + 修正后放行 + 文件 sha 不变」，第 15 项补上「绝对路径 / 会话相对路径 / 软链接三种写法在真实宿主里都落到同一 live surface，且 profile 里另一个插件的入口同样在保护范围内」；仍缺模型交互半边（同会话存活、PTC 回传、三档切换、重启后 `set_plugin`），**不写整体 PASS**。第 7 项从历史 FAIL 转为 PASS（冻结后实测 1.3 ms），历史数字保留不改写。第 3 项对抗用例先暴露安装预算 fail-open、A 修复后再验 fail-closed，修复前后两段证据均保留。
 - 环境：macOS；真实宿主 pid 90362（启动于 2026-10-28 17:28:53）；插件源码最后修改 2026-10-28 23:40 ～ 2026-10-29 00:00，**晚于宿主启动**，故真实宿主进程内加载的不是 0.2.1 最终代码（见「真机状态」）。截至 00:10 复核，该 entry 已 `fiberPhase: failed`、`crash_lore_*` 工具不可见，**本机当前防护是关的**；本宿主的动态重载通道同时失效，只能靠重启加载 0.2.1。
@@ -157,7 +157,7 @@ PASS p3-ships-defense      defense.mjs + guard.mjs + index.js + cordis.patch.yml
 PASS p4-ships-locale-seed  locale/en.json + locale/zh.json + rules.seed.json
 PASS p5/p6/p7              corpus/、incident 日志、test/docs/scripts 均不发布
 PASS p9/p10-*              安装后 node_modules 内容齐全（含 rules.seed/locale）
-PASS p12-no-author-paths   发布源码无 /Users/apple 路径
+PASS p12-no-author-paths   发布源码无作者家目录路径
 PASS p13-locale-valid      en:2 / zh:2 flat keys
 PASS p13b-import-closure   10 个相对 import 全解析
 PASS p13c-syntax-all       10 个运行时文件 node --check 全过
@@ -237,7 +237,7 @@ PASS  no worker/loader crash during the probe
 PASS real host process · 17/17 checks (2135 ms)
 ```
 
-被拒调用拿到的是真实宿主回给调用方的载荷（节选）：`[CRASH_LORE_BLOCKED] 本次操作未执行。 插件：dsh-crash-lore 位置：/Users/apple/Desktop/DSH/dsh-crash-lore/index.js 规则：P013 文件语法不合法（写进去必然激活失败） 原因：Invalid or unexpected token 风险：… 建议：先修好语法再写进 live 插件 …`
+被拒调用拿到的是真实宿主回给调用方的载荷（节选）：`[CRASH_LORE_BLOCKED] 本次操作未执行。 插件：dsh-crash-lore 位置：<repo>/index.js 规则：P013 文件语法不合法（写进去必然激活失败） 原因：Invalid or unexpected token 风险：… 建议：先修好语法再写进 live 插件 …`
 
 **这项证明什么**：0.2.1 的 `tools.guard` 在真实宿主进程、真实 `tools` 服务、真实工具参数形状下确实运行并返回拒绝；语法错（P013）与**语法完全合法但会在激活时崩的形态**（P018，`process.exit` 顶层）都拦得住，说明拦的是行为形态而不是「文件能不能 parse」；拒绝文案带规则号、位置、原因、修复建议；同一调用方随后把内容改回合法形态再写同一个文件**成功**——「被拒 → 看懂拒绝原因 → 修正 → 通过」在运行时层就是完整走通的一轮（不是模型自己写的代码，但执行链、判定、回传、重试全是真的）；被拒文件字节不变；同一进程里的正常写不受影响（不误伤）；拦截不杀掉宿主。
 **这项不证明什么**：没有模型回合，所以不覆盖「拒绝回到**原会话**、该会话继续开发」（第 4 项）、真实 PTC 回传（第 5 项）、三档切换的第 6 项真机部分，以及重启后 `set_plugin` 在线重载；这些仍写「未覆盖 · 待重启宿主后验证」。
@@ -344,10 +344,10 @@ PASS  20-entry preflight stays under 200 ms  1.3 ms (samples 76.82, 1.34, 1.51)
 
 ### 第 15 项 真实宿主里的目标解析与保护范围（绝对 / 会话相对 / 软链接 / 第二个插件，PASS，非 mock）
 
-`node scripts/real-host-resolve.mjs --json`（2026-10-29T02:4xZ 采样）→ **22/22 PASS**，2.3 s，exit 0；原始 JSON `/tmp/cl-resolve7.json`、`/tmp/cl-resolve3.json`、`/tmp/cl-resolve4.json`。做法：临时 `DSH_HOME` + `lab` profile 里装**三个**包（本包、探针 fixture、一个无关的第二个插件 `dsh-crash-lore-second-probe`），宿主**工作目录设为仓库父目录**（`/Users/apple/Desktop/DSH`），fixture 经宿主自己的 `ctx.tools.execute()` 写受保护文件三次、写第二个插件一次、写无害文件三次：
+`node scripts/real-host-resolve.mjs --json`（2026-10-29T02:4xZ 采样）→ **22/22 PASS**，2.3 s，exit 0；原始 JSON `/tmp/cl-resolve7.json`、`/tmp/cl-resolve3.json`、`/tmp/cl-resolve4.json`。做法：临时 `DSH_HOME` + `lab` profile 里装**三个**包（本包、探针 fixture、一个无关的第二个插件 `dsh-crash-lore-second-probe`），宿主**工作目录设为仓库父目录**（`<repo-parent>`），fixture 经宿主自己的 `ctx.tools.execute()` 写受保护文件三次、写第二个插件一次、写无害文件三次：
 
 ```
-PASS  session cwd is the repo parent — /Users/apple/Desktop/DSH
+PASS  session cwd is the repo parent — <repo-parent>
 PASS  absolute path to the protected file is denied
 PASS  session-relative path is denied too   {"isError":true,...[CRASH_LORE_BLOCKED]...规则 P013}
 PASS  symlinked path is denied too          {"isError":true,...[CRASH_LORE_BLOCKED]...规则 P013}
@@ -402,7 +402,7 @@ PASS  protected file is byte-identical afterwards  9428e512862b92cd → 9428e512
 - 是**同一个宿主进程**在 boot 时加载了当时的 `index.js`：boot 期间进程内 `crash_lore_guard` 曾能回「模式 开启 / 实际状态 正常 / 覆盖写前检查、安装前预检 / 最近一次检查 放行 → lead」；Config 目录显示 `absent` 是因为 boot 那份 0.2.0 没有导出 Config（0.2.1 才加），不是两个实例。
 - **2026-10-29 00:10 复核，该 entry 现已 `fiberPhase: failed`、`crash_lore_*` 工具在本会话不可见，即当前宿主里防护是关的**（不是「装好了在跑」）。插件生命周期状态以 `plugin_manager list_plugins` 的 `include:crash-lore`（`enabled: true / fiberPhase: failed`）为准，不以旧文字记录为准。
 - 00:12 尝试用合法通道 `plugin_manager set_plugin` / `set_bundle` 在线重载 0.2.1（先 disable 再 enable，各一次 + bundle 级各一次）：全部返回 `dsh: warning: 1 entry did not activate / crash-lore (dsh-crash-lore): Error: cannot create effect on inactive context`。同一报错在**与本插件无关**的操作里也作为 `adb (dsh-mobile-use)` 警告反复出现，说明这不是 crash-lore 的加载错误，而是**该宿主当前的动态 apply 通道整体不可用**（重新 apply 任何 entry 都会落在 inactive context 上）。结论：本会话内无法把 0.2.1 装上机，只能重启宿主。
-- 重载尝试没有留下持久副作用：`cordis.patch.yml` 在 00:00 后未再变化（当前 sha256 `95da2c6c5d737d7172605ad9a004165d9e80410ff3eb15bf912ed9c81b106b67`，无 `crash-lore` 行、无 `disabled` override），profile 依赖仍是 `link:/Users/apple/Desktop/DSH/dsh-crash-lore`，entry `enabled: true`。故**重启后会按正常路径加载 0.2.1**，无需任何手工修复。注：本文件当前 sha 与 Lead 备份 `/tmp/patch.bak-lead` 已不同（差异只是 `- id: adb / disabled: false` 两行，`adb` 在本宿主同样 failed），本报告早前写的 `f7c3dcf3…` 与「逐字节一致」据此作废，**以 95da2c6c… 为准**。
+- 重载尝试没有留下持久副作用：`cordis.patch.yml` 在 00:00 后未再变化（当前 sha256 `95da2c6c5d737d7172605ad9a004165d9e80410ff3eb15bf912ed9c81b106b67`，无 `crash-lore` 行、无 `disabled` override），profile 依赖仍是 `link:<repo>`，entry `enabled: true`。故**重启后会按正常路径加载 0.2.1**，无需任何手工修复。注：本文件当前 sha 与 Lead 备份 `/tmp/patch.bak-lead` 已不同（差异只是 `- id: adb / disabled: false` 两行，`adb` 在本宿主同样 failed），本报告早前写的 `f7c3dcf3…` 与「逐字节一致」据此作废，**以 95da2c6c… 为准**。
 
 
 - 00:15 补了一条**真实宿主进程**证据（见第 9 项）：0.2.1 在出厂启动器 + 临时 `DSH_HOME` + 出厂 headless 模板的真实 loader 下 6/6 激活，无 `did not activate`、合成树含 entry。这补上了「能不能被真实 loader 装上」一半，但**没有模型交互**，第 4、5 项的真实第二会话与真实 PTC 仍属未取得，判定不变。

@@ -78,7 +78,7 @@
 
 ## 8. 下一个会话的第一批动作
 
-1. `git -C /Users/apple/Desktop/DSH/dsh-crash-lore status` 确认干净、`node --test test/*.test.mjs` 157 条全绿、`node cli.mjs check .` 预检通过。
+1. `git -C <repo> status` 确认干净、`node --test test/*.test.mjs` 157 条全绿、`node cli.mjs check .` 预检通过。
 2. 跟用户确认改名窗口（是否需要保留旧包一个版本过渡、工具名改不改）。
 3. 按第 5 节第 1 步开新仓库与 `dsh-guard` 包骨架，先只改名不加功能；本地 `link:` 进 profile 验证状态卡与预检。
 4. 验证通过再谈 0.4.x 的配置一致性板块。
@@ -87,7 +87,7 @@
 ## 9. 验收门（每次改完都跑）
 
 ```sh
-cd /Users/apple/Desktop/DSH/dsh-crash-lore
+cd <repo>
 node --test test/*.test.mjs          # 期望 157 通过 0 失败
 node cli.mjs check .                 # 期望「预检通过」
 ```

@@ -47,7 +47,20 @@ import {
   setMode,
 } from './state.mjs';
 import { apply as applyInstallCheck } from './install-check/index.mjs';
-import { appendLineage, buildBrief, clip, generationOf, lineageChain, readLineage } from './handoff.mjs';
+import {
+  appendLineage,
+  buildBrief,
+  buildEvidence,
+  buildLlmBrief,
+  clip,
+  generationOf,
+  handoffInput,
+  handoffSystemPrompt,
+  lineageChain,
+  normalizeHandoffBody,
+  readLineage,
+  requestRoute,
+} from './handoff.mjs';
 
 export const name = 'dsh-crash-lore';
 /* Harness ≥ the 2026-09 tool contract: every tool must declare an output shape and a renderer.
@@ -67,6 +80,74 @@ function withOutput(tool) {
       return typeof value === 'string' ? { text: value } : { ...value, text: String(value?.text ?? '') };
     },
   };
+}
+
+/* 让模型整理交接单：一次调用、有超时、有输出上限、失败就退回自动摘要。
+ * 内存已经很高的时候就不跑这次调用：整理交接单不该再占一大块内存。 */
+const HANDOFF_TIMEOUT_MS = 180000;
+const HANDOFF_MAX_TOKENS = 8000;
+const HANDOFF_TEXT_MAX = 40000;
+const HANDOFF_LLM_MAX_PCT = 85;
+
+/** 优先用自带的构造器（带 id 和来源），解析不到就用最小结构。 */
+function userMessage(text) {
+  const content = [{ type: 'text', text }];
+  try {
+    const base = process.env.DSH_PROFILE_DIR ? path.join(process.env.DSH_PROFILE_DIR, 'package.json') : import.meta.url;
+    const mod = createRequire(base)('@deepseek-ai/dsh-llm');
+    const create = propOf(mod, 'createUserMessage');
+    if (typeof create === 'function') return create({ content, source: { kind: 'dsh-crash-lore' } });
+  } catch {
+    /* 解析不到就自己拼，adapter 认 role/content 就够了 */
+  }
+  return { role: 'user', content };
+}
+
+/** 跑一次单发调用，收完整文本；非 stop 收尾算失败，交给上层退回自动摘要。 */
+async function generateHandoffBody({ llm, route, events, parentId, parentTitle, sessionId, ancestors, signal }) {
+  const evidence = buildEvidence({ events });
+  const input = handoffInput({ parentId, parentTitle, evidence: evidence.text, ancestors });
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    try {
+      controller.abort();
+    } catch {
+      /* 已经放弃 */
+    }
+  }, HANDOFF_TIMEOUT_MS);
+  try {
+    const deadline = typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const prepared = await llm.prepareCall({ provider: route.provider, model: route.model, maxTokens: HANDOFF_MAX_TOKENS }, deadline);
+    const options = {
+      ...propOf(prepared, 'config'),
+      messages: [userMessage(input)],
+      system: handoffSystemPrompt(),
+      sessionId,
+      purpose: 'crash-lore-handoff',
+      signal: deadline,
+    };
+    let text = '';
+    let finish;
+    let truncated = false;
+    for await (const chunk of prepared.stream(options)) {
+      if (!chunk || typeof chunk !== 'object') continue;
+      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+        text += chunk.text;
+        if (text.length > HANDOFF_TEXT_MAX) {
+          truncated = true;
+          break;
+        }
+      } else if (chunk.type === 'finish') finish = chunk.reason;
+    }
+    const kind = propOf(finish, 'kind');
+    if (kind !== undefined && kind !== 'stop') {
+      const failure = propOf(propOf(finish, 'failure'), 'message');
+      throw new Error(`模型没给出完整交接单（${kind}${failure ? `：${failure}` : ''}）`);
+    }
+    return { text, evidence, truncated };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const inject = ['tools'];
@@ -706,10 +787,10 @@ export function apply(ctx, config = {}) {
   };
 
   /* 化龙妙法：把一个大会话转世成新会话。不碰别的插件、不恢复旧会话（恢复旧会话本身就要吃
-   * 几 GB 堆），只读事件、确定性写交接单、建一个空会话、归档旧会话。内存仍旧只有重启才还。 */
+   * 几 GB 堆），只读事件、写交接单、建一个空会话、归档旧会话。内存仍旧只有重启才还。 */
   ctx.effect(() => tools.register(withOutput({
     name: 'crash_lore_handoff',
-    description: '把一个已停下的会话转世成新会话：从原会话记录生成交接单，新建子会话并改名，原会话归档，血缘记在插件自己名下。会话还在跑会拒绝转世（force 可强行）；内存只有重启才能拿回来。',
+    description: '把一个已停下的会话转世成新会话：读懂原会话记录后写一份交接单，新建子会话并改名，原会话归档，血缘记在插件自己名下。会话还在跑会拒绝转世（force 可强行）；内存只有重启才能拿回来。',
     parameters: {
       type: 'object',
       properties: {
@@ -717,6 +798,7 @@ export function apply(ctx, config = {}) {
         title: { type: 'string', description: '新会话标题，默认「原标题 · 转世」' },
         brief: { type: 'boolean', description: '把交接单发给新会话，默认发；关掉只建空会话并把单子写盘' },
         force: { type: 'boolean', description: '会话还在跑也强行转世，默认拒绝' },
+        llm: { type: 'boolean', description: '默认让模型读懂原会话再写交接单；关掉只做自动摘要，省资源但会丢判断' },
       },
       additionalProperties: false,
     },
@@ -757,8 +839,10 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         return `读不到会话 ${sourceId}：${error?.message ?? error}。什么都没改。`;
       }
-      const brief = buildBrief({ parentId: sourceId, events: inspection?.events });
-      const childTitle = clip(`${brief.title} · 转世`, 40);
+      const events = inspection?.events;
+      /* 确定性那份先算：模型没答上来、堆太高不敢调、或者用户关掉 llm 时，转世也必须有交接单。 */
+      const fallback = buildBrief({ parentId: sourceId, events });
+      const childTitle = clip(`${fallback.title} · 转世`, 40);
       const cwd = inspection?.meta?.cwd;
       let child;
       try {
@@ -773,6 +857,47 @@ export function apply(ctx, config = {}) {
       }
       const childId = child?.sessionId;
       if (typeof childId !== 'string' || !childId) return '没有拿到新会话 id，原会话没动，可以重试。';
+      /* 交接单由模型读懂原会话后写；调用记在新会话名下（它已经建好），原会话的记录不被改写。
+       * 任何一步失败都退回确定性那份——转世本身不能因为整理失败而失败。 */
+      let brief = fallback;
+      let model = null;
+      let llmNote = '';
+      if (args?.llm !== false) {
+        const llm = serviceOf(ctx, 'llm');
+        const route = requestRoute(events);
+        const pct = healthPayload(home).pct;
+        if (!llm || typeof llm.prepareCall !== 'function') llmNote = '模型服务没接上，用的是自动摘要';
+        else if (!route) llmNote = '原会话没有记录用的模型，用的是自动摘要';
+        else if (pct >= HANDOFF_LLM_MAX_PCT) llmNote = `内存已到 ${pct.toFixed(0)}%，没让模型整理，用的是自动摘要`;
+        else {
+          try {
+            const ancestors = lineageChain(readLineage(home), sourceId).filter((row) => row.child !== sourceId);
+            const result = await generateHandoffBody({
+              llm,
+              route,
+              events,
+              parentId: sourceId,
+              parentTitle: fallback.title,
+              sessionId: childId,
+              ancestors,
+              signal: call,
+            });
+            const body = normalizeHandoffBody(result.text);
+            if (body) {
+              brief = buildLlmBrief({ parentId: sourceId, parentTitle: fallback.title, body, facts: fallback.facts, model: route, ancestors });
+              model = route;
+              if (result.truncated) llmNote = '交接单太长，写到上限就收了';
+            } else {
+              llmNote = '模型返回的是空的，用的是自动摘要';
+            }
+          } catch (error) {
+            recordError(state, error);
+            llmNote = `模型没答上来（${error?.message ?? error}），用的是自动摘要`;
+          }
+        }
+      } else {
+        llmNote = '按你的要求关掉了模型整理，用的是自动摘要';
+      }
       if (typeof sessions.rename === 'function') {
         try {
           await sessions.rename({ sessionId: childId, title: childTitle }, call);
@@ -836,6 +961,7 @@ export function apply(ctx, config = {}) {
         `转世完成：新会话 ${childId}（第 ${generation} 代）`,
         `标题：${childTitle}`,
         delivered === 'message' ? '交接单已经发到新会话里，它会先回一句「收到」等你下一步。' : `交接单写在 ${briefPath || '（写盘失败，内容在本次工具结果里）'}，下次打开新会话时按它接着干。`,
+        model ? `交接单由 ${model.provider}/${model.model} 整理，${brief.text.length} 字。` : `交接单是自动摘要，${brief.text.length} 字：${llmNote || '没开模型整理'}。`,
         archived ? `原会话 ${sourceId} 已归档，需要细节时取消归档回看，不会删。` : `原会话 ${sourceId} 没有归档成功（工作区服务没接上），但记录都还在。`,
         '内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开它再发一句「继续」。',
         '血缘记在插件自己的记录里，改标题不会丢；要看链条用 crash_lore_lineage。',
@@ -844,7 +970,7 @@ export function apply(ctx, config = {}) {
         lines.push('');
         lines.push(brief.text);
       }
-      return { text: lines.join('\n'), childId, parentId: sourceId, generation, delivered, archived, briefPath };
+      return { text: lines.join('\n'), childId, parentId: sourceId, generation, delivered, archived, briefPath, llm: model ? `${model.provider}/${model.model}` : '' };
     },
   })), 'crash-lore: crash_lore_handoff');
 

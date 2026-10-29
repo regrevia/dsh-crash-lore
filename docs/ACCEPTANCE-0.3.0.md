@@ -1,6 +1,6 @@
 # 0.3.0 验收记录
 
-时间：2026-10-28T21:46Z · 机器：darwin arm64 · node 24.21.0 · 仓库 `/Users/apple/Desktop/DSH/dsh-crash-lore` · 基线 `78d303b`（0.2.1 之后）
+时间：2026-10-28T21:46Z · 机器：darwin arm64 · node 24.21.0 · 仓库 `<repo>` · 基线 `78d303b`（0.2.1 之后）
 
 本轮处理的是最近一次真实崩溃（`crash-2026-10-28T18-08-20-844Z-host.log`）暴露的三个缺口：**归错因、不算规则、说没崩**。另含已并入的安装体检（`install-check/`）。
 
@@ -29,7 +29,7 @@
 `crash_lore_scan` 在 `harvested=0` 且库里有条目时改报最近一条（时间、签名、证据路径）。原始误报场景：崩溃发生在 02:08，宿主 05:38 重启时 boot 扫描已入库，之后手动 scan 只回「没有新的崩溃日志」——机器刚死过却看不出来。现在同一状态回：
 
 ```
-没有未解析的日志。最近一条：stack-overflow dsh-mobile-use · …（证据 /Users/apple/Library/Logs/DeepSeek Harness/crash-…-host.log）
+没有未解析的日志。最近一条：stack-overflow dsh-mobile-use · …（证据 ~/Library/Logs/DeepSeek Harness/crash-…-host.log）
 ```
 
 二次扫描的原始返回：`second {"harvested":0,"added":0} incidents 1`。
