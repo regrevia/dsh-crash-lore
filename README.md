@@ -1,4 +1,4 @@
-# dsh-crash-lore · 崩溃防线
+# DSH 守护 · dsh-lifeguard
 
 开发 DSH 插件时反复把 harness 修崩。这个插件把本机真实崩溃日志沉淀成一条闭环：
 
@@ -14,24 +14,24 @@
 
 | 能力 | 入口 |
 | --- | --- |
-| 提示词里常驻一段精简约束 | systemPrompt 段 `crash-lore: rules`，默认 ≤1000 字符，按 fatal/boot/lint 排序 |
-| 扫描崩溃日志 | 工具 `crash_lore_scan` |
-| 查规则 | 工具 `crash_lore_rules` |
-| 沉淀新规则 | 工具 `crash_lore_record` |
-| 装前预检 | 工具 `crash_lore_check`（包结构 / patch / 工具注册契约 / ESM 语法 + 本机规则） |
+| 提示词里常驻一段精简约束 | systemPrompt 段 `lifeguard: rules`，默认 ≤1000 字符，按 fatal/boot/lint 排序 |
+| 扫描崩溃日志 | 工具 `lifeguard_scan` |
+| 查规则 | 工具 `lifeguard_rules` |
+| 沉淀新规则 | 工具 `lifeguard_record` |
+| 装前预检 | 工具 `lifeguard_check`（包结构 / patch / 工具注册契约 / ESM 语法 + 本机规则） |
 | 装之前先跟已装的比一遍 | 工具调用后被动备注（重名 / 缺依赖 / 版本 / skill 撞车 / 功能重叠），不拦安装；`config.installCheck` 默认开 |
-| 运行中拦截危险改动 | 见「崩溃防护」一节；状态与拦截记录用工具 `crash_lore_guard` |
-| 导出清单 | 工具 `crash_lore_export`（默认只在对话里给 markdown；`target:'memory'` 才写长期记忆 global 层） |
-| 起不来时自愈 | 工具 `crash_lore_heal` / CLI `doctor` |
-| 大会话转世 | 工具 `crash_lore_handoff`（读懂原会话写交接单，新会话接手，原会话归档） |
+| 运行中拦截危险改动 | 见「崩溃防护」一节；状态与拦截记录用工具 `lifeguard_guard` |
+| 导出清单 | 工具 `lifeguard_export`（默认只在对话里给 markdown；`target:'memory'` 才写长期记忆 global 层） |
+| 起不来时自愈 | 工具 `lifeguard_heal` / CLI `doctor` |
+| 大会话转世 | 工具 `lifeguard_handoff`（读懂原会话写交接单，新会话接手，原会话归档） |
 | 批量转世 | 同一个工具带 `all: true`：先列清单，确认再一个个转，跑着的跳过 |
-| 查转世血缘 | 工具 `crash_lore_lineage` |
+| 查转世血缘 | 工具 `lifeguard_lineage` |
 | 宿主起不来时也能用 | `node cli.mjs ...`（不依赖 DSH 进程） |
 
 ## CLI
 
 ```bash
-cd ~/Desktop/DSH/dsh-crash-lore
+cd ~/Desktop/DSH/dsh-lifeguard
 node cli.mjs status                 # 规则/条目/已扫日志数
 node cli.mjs scan                   # 扫描新日志并归因
 node cli.mjs rules                  # 规则清单
@@ -47,7 +47,7 @@ node cli.mjs restore <包名>          # 撤销停用
 
 ## 存储
 
-默认 `$DSH_HOME/crash-lore/`（本机 `~/.dsh/crash-lore/`）：
+默认 `$DSH_HOME/lifeguard/`（本机 `~/.dsh/lifeguard/`）：
 
 - `incidents.jsonl` — 以 fingerprint 归并的崩溃条目：`occurrenceTimes` 保留每次发生的时间，`count` 是真实发生次数
 - `rules.json` — 规则库
@@ -83,7 +83,7 @@ live 面 = profile 目录本身 + profile 里所有插件源码（含 `link:` �
 拒绝时返回给**发起调用的那个会话**（不另开修复会话、不广播、不停用开发中的插件）：
 
 ```
-[CRASH_LORE_BLOCKED] 本次操作未执行。
+[LIFEGUARD_BLOCKED] 本次操作未执行。
 
 插件：dsh-inner-browser-use
 位置：/…/dsh-inner-browser-use/index.js:312
@@ -109,9 +109,9 @@ live 面 = profile 目录本身 + profile 里所有插件源码（含 `link:` �
 
 开关：插件设置里选「开启 / 仅监测 / 关闭」三档，存进 `config.mode`；老配置里的 `guard: false`（关闭）、`monitorOnly: true`（仅监测）仍然认。仅监测用于先观察误报，只记录不拦。
 
-状态别听它自己说：`crash_lore_guard` 按实际接上的层报 `保护中 / 仅监测 / 部分覆盖 / 检查异常 / 已关闭`，并说明哪一层没接上（例如宿主没有 tools 服务时直接报 `不可用`，不会冒充保护中）。
+状态别听它自己说：`lifeguard_guard` 按实际接上的层报 `保护中 / 仅监测 / 部分覆盖 / 检查异常 / 已关闭`，并说明哪一层没接上（例如宿主没有 tools 服务时直接报 `不可用`，不会冒充保护中）。
 
-插件本身没被加载时没有东西能回答你 —— 这种情况不会显示成 `保护中`：宿主插件列表里该入口会标 `inactive`/`absent`，`crash_lore_guard` 工具也根本不存在。安装或升级后要重启一次宿主才会接上；改完插件源码最好先跑 `node cli.mjs check .`，语法/契约错误会让加载器直接停用入口，防护随之整层消失。
+插件本身没被加载时没有东西能回答你 —— 这种情况不会显示成 `保护中`：宿主插件列表里该入口会标 `inactive`/`absent`，`lifeguard_guard` 工具也根本不存在。安装或升级后要重启一次宿主才会接上；改完插件源码最好先跑 `node cli.mjs check .`，语法/契约错误会让加载器直接停用入口，防护随之整层消失。
 
 **覆盖边界**（照实写在状态里，不假装全覆盖）：bash/脚本里 `cat > file`、`run_code` 里自己 `fs.writeFile`、外部编辑器保存、宿主自身升级，都绕过工具管线，这层看不到。
 
@@ -130,19 +130,19 @@ live 面 = profile 目录本身 + profile 里所有插件源码（含 `link:` �
 
 会话多的时候不用一个个转：`all: true` 先列清单，默认什么都不动，只给前 5 个；确认后带 `dryRun: false` 再跑。只挑已经停下、还没归档、又不是当前会话的那些——跑着的会话转世会被腰斩，跳过不劝。一次最多 5 个（`limit` 上限 10），顺序执行不并发，每个之前先看内存，到 92% 就收手。批量默认走自动摘要：每个会话都让模型读一遍，token 和堆一起涨；想要判断力，单独给那个会话传 `sessionId`。`force` 只管单会话，批量不用它绕过运行中检查。
 
-`llm: false` 可关掉模型整理，只做自动摘要（省资源，丢判断）。原会话还在跑时拒绝转世（两个会话会同时写同一份工作，旧回合还会在归档后被腰斩）；确认它停下了，或 `force: true` 强行。内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开再发一句「继续」。血缘记在 `$DSH_HOME/crash-lore/lineage.jsonl`，改标题也不会丢，链式转世靠它串起来。
+`llm: false` 可关掉模型整理，只做自动摘要（省资源，丢判断）。原会话还在跑时拒绝转世（两个会话会同时写同一份工作，旧回合还会在归档后被腰斩）；确认它停下了，或 `force: true` 强行。内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开再发一句「继续」。血缘记在 `$DSH_HOME/lifeguard/lineage.jsonl`，改标题也不会丢，链式转世靠它串起来。
 
 ## 底部的内存状态圈
 
 输入框下方常驻一个 16px 的圈和占用率：平时是暗色环，越过 70% 转琥珀，85% 转红并在圈里写一个感叹号。100% 按这台机器崩溃日志里真正致命的堆校准（约 4.1 GB），不是 V8 名义上限；没有崩溃记录时退到名义上限的 85%。
 
-读不到数据时它不消失，淡成 `内存 –`：会消失的指示器分不出「内存没事」和「指示器坏了」。路由挂没挂上，用 `crash_lore_guard` 看那行自检。读数只在界面用，不进提示词。
+读不到数据时它不消失，淡成 `内存 –`：会消失的指示器分不出「内存没事」和「指示器坏了」。路由挂没挂上，用 `lifeguard_guard` 看那行自检。读数只在界面用，不进提示词。
 
 开关：`config.healthBadge`（默认开）。
 
 ## 安全边界
 
-- 只读日志，不改 DSH 安装目录；写盘只限 `$DSH_HOME/crash-lore/`。
+- 只读日志，不改 DSH 安装目录；写盘只限 `$DSH_HOME/lifeguard/`。
 - `doctor` 只改 profile 的 `package.json` 与 `cordis.patch.yml` 里对应那一行，改前 `*.bak-<ts>` 备份；解析失败就放弃，不留半写状态。
 - 停用可撤销：`restore`，或手动把 `.bak-<ts>` 拷回。
 - 静态守卫只在低误报写法上开（如 `process.exit(`、模块顶层 `throw`、真实脱离 ESM 的 `require`）；`createRequire()` 与函数体里被 try/catch 兜住的 `throw` 不报。

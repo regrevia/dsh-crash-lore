@@ -1,5 +1,5 @@
 /**
- * dsh-crash-lore Host plugin: on activation scan new crash artifacts, keep the compact
+ * dsh-lifeguard Host plugin: on activation scan new crash artifacts, keep the compact
  * rule set as a resident prompt section, and offer tools to scan / inspect / record / preflight / heal.
  *
  * Every service read is guarded: an undeclared property read on a Cordis context throws,
@@ -22,6 +22,8 @@ import {
   seedRules,
   importCorpus,
   PROMPT_HEADER,
+  storeDir,
+  migrateLegacyStore,
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
 import { heapLine, heapPressure, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
@@ -62,7 +64,9 @@ import {
   requestRoute,
 } from './handoff.mjs';
 
-export const name = 'dsh-crash-lore';
+export const name = 'dsh-lifeguard';
+/* 旧版插件 id 只用于读取旧 profile 里已存在的 entry，不再注册第二份。 */
+const LEGACY_ID = 'crash-lore';
 /* Harness ≥ the 2026-09 tool contract: every tool must declare an output shape and a renderer.
  * Keep the payload object and render its `text` field. */
 const TOOL_OUTPUT = {
@@ -98,7 +102,7 @@ function userMessage(text) {
     const base = process.env.DSH_PROFILE_DIR ? path.join(process.env.DSH_PROFILE_DIR, 'package.json') : import.meta.url;
     const mod = createRequire(base)('@deepseek-ai/dsh-llm');
     const create = propOf(mod, 'createUserMessage');
-    if (typeof create === 'function') return create({ content, source: { kind: 'dsh-crash-lore' } });
+    if (typeof create === 'function') return create({ content, source: { kind: 'dsh-lifeguard' } });
   } catch {
     /* 解析不到就自己拼，adapter 认 role/content 就够了 */
   }
@@ -125,7 +129,7 @@ async function generateHandoffBody({ llm, route, events, parentId, parentTitle, 
       messages: [userMessage(input)],
       system: handoffSystemPrompt(),
       sessionId,
-      purpose: 'crash-lore-handoff',
+      purpose: 'lifeguard-handoff',
       signal: deadline,
     };
     let text = '';
@@ -223,7 +227,7 @@ function serviceOf(ctx, key) {
 
 function log(message) {
   try {
-    console.log(`[crash-lore] ${message}`);
+    console.log(`[lifeguard] ${message}`);
   } catch {
     /* console gone during shutdown */
   }
@@ -232,9 +236,9 @@ function log(message) {
 /* The wall that actually kills this machine, read from its own crash log: V8 dies in old space
  * before the nominal limit, so the badge counts against the observed death heap, not the limit. */
 let crashWallCache = null;
-/* 底部状态圈的自检：路由到底挂上没有，只有这里知道。不进 prompt，只在 crash_lore_guard 里显示，
+/* 底部状态圈的自检：路由到底挂上没有，只有这里知道。不进 prompt，只在 lifeguard_guard 里显示，
  * 免得「圈没数据」和「圈坏了」永远分不出来。 */
-const badgeState = { mounted: false, path: '/crash-lore/health', error: '' };
+const badgeState = { mounted: false, path: '/lifeguard/health', error: '' };
 function crashWallMB(home) {
   if (crashWallCache !== null) return crashWallCache;
   let wall = 0;
@@ -378,7 +382,7 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
   let briefPath = '';
   if (delivered === 'file') {
     try {
-      briefPath = path.join(home, 'handoff', `${childId}.md`);
+      briefPath = path.join(storeDir(home), 'handoff', `${childId}.md`);
       fs.mkdirSync(path.dirname(briefPath), { recursive: true });
       fs.writeFileSync(briefPath, brief.text);
     } catch (error) {
@@ -417,7 +421,7 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
     model ? `交接单由 ${model.provider}/${model.model} 整理，${brief.text.length} 字。` : `交接单是自动摘要，${brief.text.length} 字：${llmNote || '没开模型整理'}。`,
     archived ? `原会话 ${sourceId} 已归档，需要细节时取消归档回看，不会删。` : `原会话 ${sourceId} 没有归档成功（工作区服务没接上），但记录都还在。`,
     '内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开它再发一句「继续」。',
-    '血缘记在插件自己的记录里，改标题不会丢；要看链条用 crash_lore_lineage。',
+    '血缘记在插件自己的记录里，改标题不会丢；要看链条用 lifeguard_lineage。',
   ];
   if (delivered === 'file' && brief.text.length) {
     lines.push('');
@@ -511,6 +515,8 @@ export function apply(ctx, config = {}) {
       .then(() => {
         /* Ship the checked-in rules on every boot: the merge keeps local hit counts and adds rules
          * that a newer build knows about, so an upgrade does not need a clean store. */
+        /* 先把旧版数据目录并进来，再写任何新文件：否则新文件会挡住旧数据，迁移就白做了。 */
+        migrateLegacyStore(home);
         seedRules(home);
         importCorpus(home);
         return scan({ home });
@@ -521,7 +527,7 @@ export function apply(ctx, config = {}) {
         if (result.added.length) {
           log(`新崩溃 ${result.added.length} 条：${result.added.map(summarizeIncident).join('；')}`);
         }
-        if (result.unknown.length) log(`有 ${result.unknown.length} 条崩溃没有对应规则，用 crash_lore_record 补一条`);
+        if (result.unknown.length) log(`有 ${result.unknown.length} 条崩溃没有对应规则，用 lifeguard_record 补一条`);
       })
       .catch((error) => {
         lastScan = { at: Date.now(), added: [], unknown: [], error: String(error?.message ?? error) };
@@ -530,7 +536,7 @@ export function apply(ctx, config = {}) {
     return () => {
       alive = false;
     };
-  }, 'crash-lore: boot scan');
+  }, 'lifeguard: boot scan');
 
   /* Heap watchdog: passive, unref'd, never blocks. It cannot stop a V8 death, but it turns
    * "the host vanished" into "the heap was at 2.9 GB and climbing" while the session is still alive. */
@@ -541,7 +547,7 @@ export function apply(ctx, config = {}) {
       log(`内存观测未启动：${error?.message ?? error}`);
     }
     return () => stopWatchdog();
-  }, 'crash-lore: heap watchdog');
+  }, 'lifeguard: heap watchdog');
 
   /* Health badge route: the composer ring polls it, so the same reading reaches the person as an
    * always-visible indicator instead of a line in every prompt. Turning the badge off removes the
@@ -558,12 +564,12 @@ export function apply(ctx, config = {}) {
         return () => {};
       }
       let dispose;
-      badgeState.path = '/crash-lore/health';
+      badgeState.path = '/lifeguard/health';
       badgeState.error = '';
       try {
         dispose = server.register({
           kind: 'exact',
-          path: '/crash-lore/health',
+          path: '/lifeguard/health',
           handler: (req, res) => {
             let body = '{"enabled":false}';
             try {
@@ -593,7 +599,7 @@ export function apply(ctx, config = {}) {
           /* already released */
         }
       };
-    }, 'crash-lore: health badge');
+    }, 'lifeguard: health badge');
 
     if (typeof ctx.inject === 'function') {
       ctx.inject(['webServer'], mountHealth);
@@ -607,7 +613,7 @@ export function apply(ctx, config = {}) {
   const prompt = serviceOf(ctx, 'systemPrompt');
   if (prompt && typeof prompt.context === 'function') {
     ctx.effect(() => prompt.context({
-      name: 'crash-lore: rules',
+      name: 'lifeguard: rules',
       order: 42,
       interpolate: false,
       required: false,
@@ -619,7 +625,7 @@ export function apply(ctx, config = {}) {
           return '';
         }
       },
-    }), 'crash-lore: prompt section');
+    }), 'lifeguard: prompt section');
   }
 
   const tools = serviceOf(ctx, 'tools');
@@ -630,7 +636,7 @@ export function apply(ctx, config = {}) {
   }
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_scan',
+    name: 'lifeguard_scan',
     description: '扫描本机新的 DSH 崩溃日志（宿主崩溃、web 启动失败、启动诊断），转成条目并按已知规则归因；返回这次新增的崩溃和还没有规则的未知项。发现 harness 崩过、或怀疑某个插件把进程搞死时先调它。',
     parameters: {
       type: 'object',
@@ -655,7 +661,7 @@ export function apply(ctx, config = {}) {
         lines.push(`  证据 ${incident.artifact}`);
       }
       if (!result.added.length && result.harvested) lines.push(`解析了 ${result.harvested} 个日志，没有新条目（与已有条目重复）。`);
-      if (result.unknown.length) lines.push('未知形态先调 crash_lore_record 补规则，再调 crash_lore_export 写进长期记忆。');
+      if (result.unknown.length) lines.push('未知形态先调 lifeguard_record 补规则，再调 lifeguard_export 写进长期记忆。');
       if (result.correlated) lines.push(`关联归因 ${result.correlated} 条：堆耗尽日志里没有插件栈，标成同一次运行前一条插件崩溃的来源。`);
       for (const row of result.oomEvidence ?? []) {
         for (const line of oomEvidenceLines(row.evidence)) lines.push(`  ${row.signature} — ${line}`);
@@ -675,10 +681,10 @@ export function apply(ctx, config = {}) {
         sessions: footprint,
       };
     },
-  })), 'crash-lore: crash_lore_scan');
+  })), 'lifeguard: lifeguard_scan');
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_rules',
+    name: 'lifeguard_rules',
     description: '查本机沉淀的 DSH 崩溃规则（标题 / 成因 / 改法 / 命中次数）。写插件、改 profile 配置前先查一遍要遵守什么。',
     parameters: {
       type: 'object',
@@ -690,14 +696,14 @@ export function apply(ctx, config = {}) {
     },
     execute: async (args) => {
       const rules = compactRules(readRules(home), { query: args?.query, limit: Math.max(1, Math.min(60, Number(args?.limit) || 20)) });
-      if (!rules.length) return { text: '还没有规则。先 crash_lore_scan 扫日志。', rules: [] };
+      if (!rules.length) return { text: '还没有规则。先 lifeguard_scan 扫日志。', rules: [] };
       const lines = rules.map((rule) => `[${rule.id}] ${rule.title}${rule.severity === 'fatal' ? '（致命）' : rule.severity === 'boot' ? '（阻断启动）' : ''} 命中${rule.hits}\n  成因 ${rule.cause}\n  改法 ${rule.fix}`);
       return { text: lines.join('\n'), rules };
     },
-  })), 'crash-lore: crash_lore_rules');
+  })), 'lifeguard: lifeguard_rules');
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_record',
+    name: 'lifeguard_record',
     description: '把一次崩溃或一条踩坑经验沉淀成规则（标题 + 成因 + 改法 + 可选静态守卫），写进本机规则库，下一步起生效。修完导致崩溃的插件后调用，把这次的教训留下。',
     parameters: {
       type: 'object',
@@ -707,7 +713,7 @@ export function apply(ctx, config = {}) {
         fix: { type: 'string', description: '怎么改，≤120 字' },
         signature: { type: 'string', description: '匹配崩溃信息的正则；不写则按标题去重更新' },
         severity: { type: 'string', enum: ['fatal', 'boot', 'lint'], description: 'fatal 杀进程 / boot 阻断启动 / lint 局部异常' },
-        guardPattern: { type: 'string', description: '可选：能在插件源码里静态命中的正则，用于 crash_lore_check 预检' },
+        guardPattern: { type: 'string', description: '可选：能在插件源码里静态命中的正则，用于 lifeguard_check 预检' },
         guardMessage: { type: 'string', description: '命中守卫时给作者看的一句话' },
         evidence: { type: 'string', description: '证据：日志路径或现象描述' },
       },
@@ -734,12 +740,12 @@ export function apply(ctx, config = {}) {
         guard,
         tags: args.evidence ? [String(args.evidence).slice(0, 80)] : [],
       }, home);
-      return { text: `已记下 [${rule.id}] ${rule.title}；下一步起出现在提示词里。同步长期记忆用 crash_lore_export。`, rule };
+      return { text: `已记下 [${rule.id}] ${rule.title}；下一步起出现在提示词里。同步长期记忆用 lifeguard_export。`, rule };
     },
-  })), 'crash-lore: crash_lore_record');
+  })), 'lifeguard: lifeguard_record');
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_check',
+    name: 'lifeguard_check',
     description: '安装前静态预检插件源码目录（不执行代码）：先按 loader 的真实要求检查包结构、patch、工具注册契约、ESM 语法，再套本机崩溃规则。改完插件、准备装进 profile 前调它；有 fatal/boot 就是装上去会崩。',
     parameters: {
       type: 'object',
@@ -757,10 +763,10 @@ export function apply(ctx, config = {}) {
       const blocking = findings.filter((item) => item.severity === 'fatal' || item.severity === 'boot').length;
       return { text: renderAll(findings, dir), findings: findings.length, blocking };
     },
-  })), 'crash-lore: crash_lore_check');
+  })), 'lifeguard: lifeguard_check');
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_export',
+    name: 'lifeguard_export',
     description: '把本机崩溃规则导出：memory 写进 dsh-lite-memory 长期记忆（跨会话、按标题更新），markdown 输出一段精简清单。规则稳定后调一次。',
     parameters: {
       type: 'object',
@@ -789,10 +795,10 @@ export function apply(ctx, config = {}) {
         result,
       };
     },
-  })), 'crash-lore: crash_lore_export');
+  })), 'lifeguard: lifeguard_export');
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_heal',
+    name: 'lifeguard_heal',
     description: '当 harness 起不来时用的自愈：找出最近一次致命崩溃的元凶插件并给停用计划。apply=true 直接停用；auto=true 只在确认是崩溃循环（24h 内同元凶 ≥3 次）时才停用，否则只报告。改动前备份，可 doctor --restore 撤销，重启 harness 生效。',
     parameters: {
       type: 'object',
@@ -811,7 +817,7 @@ export function apply(ctx, config = {}) {
       if (result?.conclusion) lines.push(result.conclusion);
       return { text: lines.length ? lines.join('\n') : '没有找到可停用的元凶。', result };
     },
-  })), 'crash-lore: crash_lore_heal');
+  })), 'lifeguard: lifeguard_heal');
 
   /* ---- live defense ----------------------------------------------------------------
    * Three layers stay separate on purpose: the user's mode (开启 / 仅监测 / 关闭), what the
@@ -903,7 +909,7 @@ export function apply(ctx, config = {}) {
           }
         });
         return track(disposer);
-      }, 'crash-lore: write guard');
+      }, 'lifeguard: write guard');
       setHook(state, 'write', 'sync');
     } else {
       log('本机没有写前守卫接口，这一层没接上');
@@ -930,7 +936,7 @@ export function apply(ctx, config = {}) {
           return next();
         });
         return track(disposer);
-      }, 'crash-lore: install guard');
+      }, 'lifeguard: install guard');
       setHook(state, 'preExecute', 'async');
     } else {
       log('本机没有安装前预检接口，这一层没接上');
@@ -971,11 +977,11 @@ export function apply(ctx, config = {}) {
           .map((value) => (typeof value === 'string' ? value : ''))
           .find(Boolean) ?? '';
         const text = [
-          `崩溃防线阻止了一次子调用（${step}）。会话可以继续。`,
+          `DSH 守护阻止了一次子调用（${step}）。会话可以继续。`,
           `规则 ${entry.rule}${entry.title ? `：${entry.title}` : ''}`,
           `原因：${entry.reason || entry.title || '目标文件会被下一次启动加载，写坏会让宿主起不来'}`,
           `未执行：${step}${target ? ` → ${target}` : ''}`,
-          '改法：按上面的原因改掉再重试这一步；哪条规则不清楚就先跑 crash_lore_check 看致命项。',
+          '改法：按上面的原因改掉再重试这一步；哪条规则不清楚就先跑 lifeguard_check 看致命项。',
         ].join('\n');
         const message = {
           id: randomUUID(),
@@ -988,12 +994,12 @@ export function apply(ctx, config = {}) {
         recordError(state, error);
         return next();
       }
-    }), 'crash-lore: ptc feedback');
+    }), 'lifeguard: ptc feedback');
   }
 
   /* 静态安装体检：装之前跟已装的比一遍（只加备注，不拦安装）。关掉防御时一并关闭。 */
   if (config.installCheck !== false && modeOfConfig(config) !== 'off') {
-    ctx.effect(() => applyInstallCheck(ctx, { overlap: config.overlapCheck !== false, impl: config.implCheck !== false }), 'crash-lore: install check');
+    ctx.effect(() => applyInstallCheck(ctx, { overlap: config.overlapCheck !== false, impl: config.implCheck !== false }), 'lifeguard: install check');
   }
 
   /* Mode is the only writable knob, and it is written through the DSH config editor, so
@@ -1013,7 +1019,7 @@ export function apply(ctx, config = {}) {
       return '读配置入口失败，模式没有保存';
     }
     const row = Array.isArray(rows)
-      ? rows.find((item) => item?.entry?.options?.name === name || item?.entry?.options?.id === 'crash-lore')
+      ? rows.find((item) => item?.entry?.options?.name === name || item?.entry?.options?.id === 'lifeguard' || item?.entry?.options?.id === LEGACY_ID)
       : null;
     if (!row) return 'profile 里找不到这个插件的配置入口，模式没有保存';
     try {
@@ -1036,7 +1042,7 @@ export function apply(ctx, config = {}) {
   /* 化龙妙法：把一个大会话转世成新会话。不碰别的插件、不恢复旧会话（恢复旧会话本身就要吃
    * 几 GB 堆），只读事件、写交接单、建一个空会话、归档旧会话。内存仍旧只有重启才还。 */
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_handoff',
+    name: 'lifeguard_handoff',
     description: '把一个已停下的会话转世成新会话：读懂原会话记录后写一份交接单，新建子会话并改名，原会话归档，血缘记在插件自己名下。会话还在跑会拒绝转世（force 可强行）；内存只有重启才能拿回来。',
     parameters: {
       type: 'object',
@@ -1071,10 +1077,10 @@ export function apply(ctx, config = {}) {
       if (!one.ok) return one.text;
       return { text: one.text, childId: one.childId, parentId: one.parentId, generation: one.generation, delivered: one.delivered, archived: one.archived, briefPath: one.briefPath, llm: one.llm };
     },
-  })), 'crash-lore: crash_lore_handoff');
+  })), 'lifeguard: lifeguard_handoff');
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_lineage',
+    name: 'lifeguard_lineage',
     description: '看一个会话的转世血缘：第几代、从哪个会话转来、中间经过几代。标题被改过也不影响。',
     parameters: {
       type: 'object',
@@ -1089,7 +1095,7 @@ export function apply(ctx, config = {}) {
       const sessionId = asked || (typeof current === 'string' ? current : '');
       if (!sessionId) return '请传 sessionId。';
       const rows = readLineage(home);
-      if (!rows.length) return '还没有转世记录。用 crash_lore_handoff 转世一次就会记下来。';
+      if (!rows.length) return '还没有转世记录。用 lifeguard_handoff 转世一次就会记下来。';
       const chain = lineageChain(rows, sessionId);
       const lines = [];
       if (chain.length) {
@@ -1105,10 +1111,10 @@ export function apply(ctx, config = {}) {
       }
       return lines.join('\n');
     },
-  })), 'crash-lore: crash_lore_lineage');
+  })), 'lifeguard: lifeguard_lineage');
 
   ctx.effect(() => tools.register(withOutput({
-    name: 'crash_lore_guard',
+    name: 'lifeguard_guard',
     description: '看崩溃防护现在是什么模式、DSH 实际接上了哪几层检查、最近一次检查和拒绝记录。传 mode 可以把防护切成 开启 / 仅监测 / 关闭，写进配置，刷新和重启后保留。',
     parameters: {
       type: 'object',
@@ -1148,7 +1154,7 @@ export function apply(ctx, config = {}) {
       if (note) lines.push(note);
       return { text: lines.join('\n'), ...info, denials: recent, note, heap, loops };
     },
-  })), 'crash-lore: crash_lore_guard');
+  })), 'lifeguard: lifeguard_guard');
 
   /* Surface the newest unresolved incident once per session, so an agent knows *why* the
    * previous run died without being told. */
@@ -1162,7 +1168,7 @@ export function apply(ctx, config = {}) {
     if (last.culprit?.name && quarantined.has(last.culprit.name)) return () => {};
     log(`最近一次崩溃：${summarizeIncident(last)}（${last.ts}）`);
     return () => {};
-  }, 'crash-lore: last incident log');
+  }, 'lifeguard: last incident log');
 
   return { scan: () => lastScan, header: PROMPT_HEADER, badge: () => ({ ...badgeState }) };
 }

@@ -1,4 +1,4 @@
 {
-  "meta.title": "Crash Lore",
+  "meta.title": "DSH Lifeguard",
   "meta.description": "Turns this machine's DSH crash logs into compact rules: prompt constraints, long-term memory, install-time preflight, a passive install check against what is already installed, and self-heal when the harness will not boot."
 }

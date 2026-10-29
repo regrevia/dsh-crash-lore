@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Acceptance matrix for dsh-crash-lore 0.2.x live defense.
+ * Acceptance matrix for dsh-lifeguard 0.2.x live defense.
  *
  * Run:   node test/integration/matrix.mjs            (post-fix strict: any FAIL exits 1)
  *        node test/integration/matrix.mjs --baseline (0.2.0 baseline: documented holes are XFAIL)
@@ -29,11 +29,11 @@ function record(id, ok, expected, actual, extra = {}) {
 }
 
 function isDenied(value) {
-  return typeof value === 'string' && value.includes('CRASH_LORE_BLOCKED');
+  return typeof value === 'string' && value.includes('LIFEGUARD_BLOCKED');
 }
 
 function isPreDenied(value) {
-  return Boolean(value && value.kind === 'deny' && value.info?.code === 'CRASH_LORE_BLOCKED');
+  return Boolean(value && value.kind === 'deny' && value.info?.code === 'LIFEGUARD_BLOCKED');
 }
 
 async function baseFixture({ prefix = 'cl-accept-', withNodeModulesLink = false, depName = 'dev-plugin' } = {}) {
@@ -131,7 +131,7 @@ async function item3() {
   }
 
   // 3c) set_plugin by entry id where the patch id differs from the package name
-  //     (real shape: entryId include:crash-lore, package dsh-crash-lore).
+  //     (real shape: entryId include:lifeguard, package dsh-lifeguard).
   {
     const root = mkroot('cl-accept-mismatch-');
     const bad = await badPlugin(root, 'dsh-bad-plugin', { patchId: 'bad' });
@@ -233,7 +233,7 @@ async function item45() {
     const h = await boot({ home, profileDir: profile });
     const decision = await h.callPre({ name: 'plugin_manager', arguments: { action: 'install_bundle', target: `file:${bad}` } });
     const payloadOk = isPreDenied(decision)
-      && decision.info.name === 'CrashLoreBlocked'
+      && decision.info.name === 'LifeguardBlocked'
       && /位置：/.test(decision.reason) && /建议：/.test(decision.reason) && /重新提交/.test(decision.reason);
     record('c13-ptc-payload', payloadOk, 'structured denial with rule/位置/建议/重新提交', payloadOk ? `code=${decision.info.code} rule=${decision.info.rule}` : 'payload incomplete');
     h.dispose();

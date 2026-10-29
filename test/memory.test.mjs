@@ -142,7 +142,7 @@ test('titlePrefix 可定制，且标题不超过 60 字', { skip }, async () => 
 test('exportMarkdown / toMemoryDraft 都不写存储', async () => {
   const home = tempHome();
   const md = mem.exportMarkdown([rule()]);
-  assert.match(md, /## DSH 崩溃防线/);
+  assert.match(md, /## DSH 守护/);
   assert.match(md, /client\.js 顶层禁止重新声明/);
   const draftDocument = mem.toMemoryDraft([rule()], { home });
   assert.equal(draftDocument.drafts.length, 1);

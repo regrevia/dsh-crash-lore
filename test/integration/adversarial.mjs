@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Adversarial acceptance probes for dsh-crash-lore 0.2.1 (Agent C, independent).
+ * Adversarial acceptance probes for dsh-lifeguard 0.2.1 (Agent C, independent).
  *
  * These do not replace the matrix; they pin down edge cases the matrix fixtures do not
  * reach. Only /tmp is written. Run:  node test/integration/adversarial.mjs [--strict]

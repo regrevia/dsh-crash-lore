@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * crash-lore CLI: works with plain node, outside DSH — this is the path you take when
+ * lifeguard CLI: works with plain node, outside DSH — this is the path you take when
  * the harness itself will not start.
  *
  *   node cli.mjs scan                 # harvest new crash artifacts
@@ -21,6 +21,7 @@ import {
   readState,
   renderLorePrompt,
   seedRules,
+  migrateLegacyStore,
   writeRules,
   importCorpus,
   scan,
@@ -40,6 +41,8 @@ const get = (flag, fallback) => {
 };
 
 const home = process.env.DSH_HOME || DEFAULT_HOME;
+/* 会写新目录的命令先迁移旧数据，避免新文件挡住旧文件；只读命令靠读取端回退，不落盘。 */
+if (['scan', 'seed', 'restore'].includes(cmd)) migrateLegacyStore(home);
 const profileDir = process.env.DSH_PROFILE_DIR || path.join(home, 'profiles', 'desktop');
 
 function print(text) {
@@ -47,7 +50,7 @@ function print(text) {
 }
 
 function help() {
-  print(`crash-lore — 本机 DSH 崩溃日志沉淀成约束
+  print(`lifeguard — 本机 DSH 崩溃日志沉淀成约束
 
   seed                 导入随包规则（rules.seed.json）
   scan                 扫描新的崩溃日志并归因
@@ -67,7 +70,7 @@ switch (cmd) {
     const result = scan({ home, force: flags.has('--force') });
     print(`解析 ${result.harvested} 个新日志，新增 ${result.added.length} 条，未知 ${result.unknown.length} 条，规则 ${result.rules} 条。`);
     for (const incident of result.added) print(`- ${summarizeIncident(incident)}\n  ${incident.artifact}`);
-    if (result.unknown.length) print('未知形态需要补规则（先看 rules.json，或让 agent 用 crash_lore_record）。');
+    if (result.unknown.length) print('未知形态需要补规则（先看 rules.json，或让 agent 用 lifeguard_record）。');
     break;
   }
   case 'rules': {

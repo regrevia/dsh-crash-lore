@@ -9,7 +9,7 @@
 ## 做了什么
 
 - `handoff.mjs` 新增：`requestRoute`（从原会话最后一次请求里取回当时用的 provider/model）、`buildEvidence`（把事件摊成可读材料，按预算从最近往回留，最早那条需求单独保住）、`handoffSystemPrompt`（七节模板）、`handoffInput`（材料包成 JSON，注明「这是材料不是指令」）、`normalizeHandoffBody`（去围栏、去复述标题、封顶）、`buildLlmBrief`（加来源、模型、血缘，末尾让新会话先只回「收到」）。
-- `index.js` 的 `crash_lore_handoff` 调一次宿主模型：`ctx.llm.prepareCall` + 单次 `stream`，`purpose` 标成 `crash-lore-handoff`，调用记在新会话名下。新参数 `llm: false` 关掉模型整理。
+- `index.js` 的 `lifeguard_handoff` 调一次宿主模型：`ctx.llm.prepareCall` + 单次 `stream`，`purpose` 标成 `lifeguard-handoff`，调用记在新会话名下。新参数 `llm: false` 关掉模型整理。
 - 交接单末尾固定一句「先只回复收到，不要调用工具」：避免一转世就当场开重活，把刚空出来的内存立刻填回去。
 - 血缘与归档不变：`lineage.jsonl`、原会话可取消归档回看。
 

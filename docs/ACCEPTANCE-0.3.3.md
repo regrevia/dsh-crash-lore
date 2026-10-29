@@ -27,7 +27,7 @@
 - 安装前预检（`install-check`）只看 P001/P002/P005/P007/P008/P009/P010/P013/P014/P016/P018/P019/P021
   这些**可静态识别**的形态。`_dispose()` 重入不是语法错，也不是配置错，静态看是合法代码。
 - 堆耗尽日志里只有 `app.asar/lib/main.js` 帧，`culpritFromFrame` 只能给出 `core:deepseek-harness`，
-  插件名一次都不出现，所以 `crash_lore_heal` 的「同一元凶 24h ≥3 次」永远不触发。
+  插件名一次都不出现，所以 `lifeguard_heal` 的「同一元凶 24h ≥3 次」永远不触发。
 - 结论：这是防线**覆盖边界**，不是回归。边界写进状态卡：「覆盖不到……已经装进去的代码在运行时崩」。
 
 ## 3. 0.3.3 加了什么
@@ -55,14 +55,14 @@ dsh-mobile-use  count=8  inferredCount=6
 ### 3.2 崩溃循环 `crashLoops(incidents, { windowMs = 24h, min = 3 })`
 
 同一元凶 24h 内 ≥3 次即判循环，给动作而不是给日志：
-`崩溃循环 dsh-mobile-use 24h 内 8 次（…，其中 6 次按关联归因）→ 先 crash_lore_heal 停用再修`。
-`crash_lore_scan` 与 `crash_lore_guard` 都输出这行。
+`崩溃循环 dsh-mobile-use 24h 内 8 次（…，其中 6 次按关联归因）→ 先 lifeguard_heal 停用再修`。
+`lifeguard_scan` 与 `lifeguard_guard` 都输出这行。
 
 ### 3.3 堆内存观测 `watchdog.mjs`
 
 被动采样（20 s 一次，`unref` 定时器，失败即丢，从不 `process.exit`、从不接管宿主关闭）：
 `heapUsed/rss/peak/trendMBPerMin`，越过 2800 MB 记一条告警并持久化到
-`~/.dsh/crash-lore/heap.jsonl`，重启后还能看到「上次运行到过 4037 MB」。
+`~/.dsh/lifeguard/heap.jsonl`，重启后还能看到「上次运行到过 4037 MB」。
 
 只做一件事：把「宿主突然没了」变成活着时的数字。它**不能**阻止 V8 堆耗尽。
 

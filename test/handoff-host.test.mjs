@@ -15,7 +15,7 @@ const events = [
 ];
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-handoff-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-handoff-'));
 }
 
 /** 假宿主：记录会话服务每次调用，llm 由用例自己给。 */
@@ -105,7 +105,7 @@ function makeContext(services) {
 }
 
 function handoffTool(ctx) {
-  return ctx.tools.registered.find((tool) => tool.name === 'crash_lore_handoff');
+  return ctx.tools.registered.find((tool) => tool.name === 'lifeguard_handoff');
 }
 
 async function run({ llm, args = {}, services: given } = {}) {
@@ -114,7 +114,7 @@ async function run({ llm, args = {}, services: given } = {}) {
   const ctx = makeContext({ ...host.services, ...given });
   apply(ctx, { home });
   const tool = handoffTool(ctx);
-  assert.ok(tool, 'crash_lore_handoff 应该注册上');
+  assert.ok(tool, 'lifeguard_handoff 应该注册上');
   const signal = new AbortController().signal;
   const result = await tool.execute({ sessionId: 'parent-1', ...args }, { signal });
   ctx.dispose();
@@ -122,8 +122,8 @@ async function run({ llm, args = {}, services: given } = {}) {
 }
 
 const goodStream = async function* () {
-  yield { type: 'text-delta', text: '## 目标\n' };
-  yield { type: 'text-delta', text: '把底部状态圈换成圆环' };
+  yield { type: 'text-delta', text: '## 当前目标\n把底部状态圈换成圆环\n\n' };
+  yield { type: 'text-delta', text: '## 持续约束\n不要动 index.js\n\n## 未完成 / 下一步\n跑一遍测试' };
   yield { type: 'finish', reason: { kind: 'stop' } };
 };
 
@@ -135,7 +135,8 @@ test('模型给了完整交接单时，新会话收到的是模型写的那份',
   assert.equal(calls.prompt.length, 1);
   const text = calls.prompt[0].content[0].text;
   assert.match(text, /【化龙妙法 · 交接单】/);
-  assert.match(text, /## 目标\n把底部状态圈换成圆环/);
+  assert.match(text, /## 当前目标\n把底部状态圈换成圆环/);
+  assert.match(text, /## 持续约束\n不要动 index\.js/);
   assert.match(text, /整理：deepseek\/v4/);
   assert.equal(result.llm, 'deepseek/v4');
   assert.match(result.text, /交接单由 deepseek\/v4 整理/);
@@ -195,7 +196,7 @@ test('原会话没记下用的模型时不猜，直接自动摘要', async () =>
 test('交接单与血缘都落盘，转世记录能查回来', async () => {
   const { calls, home, result } = await run({ llm: { stream: goodStream } });
   const rows = fs
-    .readFileSync(path.join(home, 'lineage.jsonl'), 'utf8')
+    .readFileSync(path.join(home, 'lifeguard', 'lineage.jsonl'), 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line));

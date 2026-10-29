@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { preflight } from '../../../guard.mjs';
 
-export const name = 'dsh-crash-lore-guard-probe';
+export const name = 'dsh-lifeguard-guard-probe';
 export const inject = ['tools'];
 
 export function apply(ctx) {

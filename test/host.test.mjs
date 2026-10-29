@@ -15,7 +15,7 @@ import {
   snapshot,
 } from '../state.mjs';
 
-function tmp(prefix = 'crash-lore-host-') {
+function tmp(prefix = 'lifeguard-host-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
@@ -107,7 +107,7 @@ function makeContext(services = {}) {
 }
 
 function guardTool(ctx) {
-  return ctx.tools.registered.find((tool) => tool.name === 'crash_lore_guard');
+  return ctx.tools.registered.find((tool) => tool.name === 'lifeguard_guard');
 }
 
 function listener(ctx, event) {
@@ -160,7 +160,7 @@ test('protect denies the losing write and keeps one record per denial, not one p
       arguments: { file_path: path.join(linked, 'index.js'), content: "throw new Error('boom');\n" },
     };
     const first = ctx.tools.guards[0](exec);
-    assert.match(String(first), /^\[CRASH_LORE_BLOCKED\]/);
+    assert.match(String(first), /^\[LIFEGUARD_BLOCKED\]/);
 
     const info = defenseState();
     assert.equal(info.mode, 'protect');
@@ -249,7 +249,7 @@ test('a live-editable config ref drives the mode without a restart', async () =>
       callId: 'call-ref',
       arguments: { file_path: path.join(linked, 'index.js'), content: "throw new Error('boom');\n" },
     });
-    assert.match(String(outcome), /^\[CRASH_LORE_BLOCKED\]/);
+    assert.match(String(outcome), /^\[LIFEGUARD_BLOCKED\]/);
     ctx.dispose();
   });
 });
@@ -277,7 +277,7 @@ test('a hot reload keeps the denial history and never doubles the hooks', async 
       callId: 'call-hot',
       arguments: { file_path: path.join(linked, 'index.js'), content: "throw new Error('boom');\n" },
     });
-    assert.match(String(refuse()), /CRASH_LORE_BLOCKED/);
+    assert.match(String(refuse()), /LIFEGUARD_BLOCKED/);
 
     ctx.dispose();
     assert.equal(ctx.tools.guards.length, 0, 'disposing removes the hook');
@@ -362,7 +362,7 @@ test('the mode is written through the config editor and takes effect before the 
   const edits = [];
   const services = {
     configEditor: {
-      configuration: () => [{ entry: { options: { id: 'crash-lore', name: 'dsh-crash-lore' } } }],
+      configuration: () => [{ entry: { options: { id: 'lifeguard', name: 'dsh-lifeguard' } } }],
       edit: async (entry, change) => {
         edits.push(change({ mode: 'protect', home: '/tmp/home', guard: false }));
       },
@@ -392,7 +392,7 @@ test('the mode is written through the config editor and takes effect before the 
       callId: 'call-after-on',
       arguments: { file_path: path.join(linked, 'index.js'), content: "throw new Error('boom');\n" },
     });
-    assert.match(String(outcome), /^\[CRASH_LORE_BLOCKED\]/);
+    assert.match(String(outcome), /^\[LIFEGUARD_BLOCKED\]/);
 
     await guardTool(ctx).execute({});
     assert.equal(edits.length, 2, 'cancel persists nothing');
@@ -437,7 +437,7 @@ test('the memory ring route is mounted when webServer already exists', async () 
     const ctx = makeContext({ webServer: server });
     apply(ctx, {});
     assert.equal(routes.length, 1);
-    assert.equal(routes[0].path, '/crash-lore/health');
+    assert.equal(routes[0].path, '/lifeguard/health');
     const body = await new Promise((resolve) => {
       const chunks = [];
       routes[0].handler({}, { writeHead: () => {}, end: (chunk) => resolve(String(chunk)) });
@@ -462,6 +462,6 @@ test('a webServer that only shows up after apply still gets the route', async ()
     ctx.get = (key) => (key === 'webServer' ? server : undefined);
     injected.scopeFactory(ctx);
     assert.equal(routes.length, 1);
-    assert.equal(routes[0].path, '/crash-lore/health');
+    assert.equal(routes[0].path, '/lifeguard/health');
   });
 });

@@ -29,7 +29,7 @@ const CRASH_AT = Date.parse('2026-10-29T02:34:25.078Z');
 const SAMPLE_AT = Date.parse('2026-10-29T02:30:00.000Z');
 
 function tmpHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-fp-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-fp-'));
   fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
   return home;
 }

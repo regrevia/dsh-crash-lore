@@ -62,7 +62,7 @@ test('crash loop needs three hits inside the window and names the plugin', () =>
   assert.equal(loops[0].count, 4);
   assert.equal(loops[0].inferredCount, 3);
   assert.match(loopLines(loops)[0], /dsh-mobile-use 24h 内 4 次/);
-  assert.match(loopLines(loops)[0], /crash_lore_heal/);
+  assert.match(loopLines(loops)[0], /lifeguard_heal/);
 });
 
 test('two hits are not a loop, and rows outside the window are ignored', () => {

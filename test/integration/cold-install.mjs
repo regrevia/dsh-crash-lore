@@ -65,21 +65,21 @@ record('p6-no-incidents', !listing.some((row) => /\.jsonl$/.test(row)), 'no inci
 record('p7-no-tests-dev', !listing.some((row) => /^package\/(test|tests|docs|scripts)\//.test(row)), 'no test/docs/scripts in tarball', listing.filter((r) => /^package\/(test|tests|docs|scripts)\//.test(r)).slice(0, 3).join(', ') || 'absent');
 
 /* 2) cold install into a throw-away profile, the way the host would. */
-fs.writeFileSync(path.join(profile, 'package.json'), `${JSON.stringify({ name: 'cl-cold-profile', private: true, type: 'module', dependencies: { 'dsh-crash-lore': `file:${tgz}` } }, null, 2)}\n`);
+fs.writeFileSync(path.join(profile, 'package.json'), `${JSON.stringify({ name: 'cl-cold-profile', private: true, type: 'module', dependencies: { 'dsh-lifeguard': `file:${tgz}` } }, null, 2)}\n`);
 const install = run('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', profile], { cwd: profile });
 record('p8-npm-install', install.status === 0, 'npm install from tarball exits 0', install.status === 0 ? 'ok' : String(install.stderr).slice(0, 600));
 // Registry installs are declared as a version range, not as file:<tarball>; use the same shape the
 // host sees so live-surface resolution is exercised the way it is in production.
 
-const installed = path.join(profileNm, 'dsh-crash-lore');
+const installed = path.join(profileNm, 'dsh-lifeguard');
 if (!fs.existsSync(installed)) {
-  record('p9-installed-dir', false, 'node_modules/dsh-crash-lore exists', 'missing');
+  record('p9-installed-dir', false, 'node_modules/dsh-lifeguard exists', 'missing');
   console.log(`artefacts kept at ${root}`);
   process.exit(1);
 }
-record('p9-installed-dir', true, 'node_modules/dsh-crash-lore exists', installed);
+record('p9-installed-dir', true, 'node_modules/dsh-lifeguard exists', installed);
 const installedVersion = JSON.parse(fs.readFileSync(path.join(installed, 'package.json'), 'utf8')).version;
-fs.writeFileSync(path.join(profile, 'package.json'), `${JSON.stringify({ name: 'cl-cold-profile', private: true, type: 'module', dependencies: { 'dsh-crash-lore': installedVersion } }, null, 2)}\n`);
+fs.writeFileSync(path.join(profile, 'package.json'), `${JSON.stringify({ name: 'cl-cold-profile', private: true, type: 'module', dependencies: { 'dsh-lifeguard': installedVersion } }, null, 2)}\n`);
 
 for (const f of ['defense.mjs', 'guard.mjs', 'index.js', 'cordis.patch.yml', 'rules.seed.json', 'locale/en.json', 'locale/zh.json']) {
   record(`p10-file-${f.replace(/\W/g, '-')}`, fs.existsSync(path.join(installed, f)), `${f} present after install`, fs.existsSync(path.join(installed, f)) ? 'present' : 'missing');
@@ -158,9 +158,9 @@ const ctx = {
 const mod = await import(pathToFileURL(indexFile).href);
 await mod.apply(ctx, { home: homeDir });
 await new Promise((resolve) => setTimeout(resolve, 30));
-const guardTool = registered.find((t) => t.name === 'crash_lore_guard');
+const guardTool = registered.find((t) => t.name === 'lifeguard_guard');
 const status = await guardTool.execute({ limit: 5 });
-const target = path.join(profileDir, 'node_modules', 'dsh-crash-lore', 'index.js');
+const target = path.join(profileDir, 'node_modules', 'dsh-lifeguard', 'index.js');
 const before = fs.readFileSync(target);
 const denial = guards[0]?.({ name: 'write', arguments: { file_path: target, content: 'throw new Error("top level");' } });
 const unchanged = Buffer.compare(before, fs.readFileSync(target)) === 0;
@@ -172,10 +172,10 @@ console.log(JSON.stringify({
   hooks: status.hooks,
   rules: status.rules ?? status.ruleCount ?? null,
   denials: status.denials?.length ?? null,
-  guardDenied: typeof denial === 'string' && denial.includes('CRASH_LORE_BLOCKED'),
+  guardDenied: typeof denial === 'string' && denial.includes('LIFEGUARD_BLOCKED'),
   unchanged,
   homeFiles: fs.existsSync(homeDir) ? fs.readdirSync(homeDir) : [],
-  homeCrashLore: fs.existsSync(path.join(homeDir, 'crash-lore')) ? fs.readdirSync(path.join(homeDir, 'crash-lore')) : [],
+  homeCrashLore: fs.existsSync(path.join(homeDir, 'lifeguard')) ? fs.readdirSync(path.join(homeDir, 'lifeguard')) : [],
 }));
 `);
 const boot = run(process.execPath, [runner, path.join(installed, 'index.js'), home, profile], { cwd: profile, timeout: 60000 });
@@ -188,7 +188,7 @@ const line = boot.stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop
 const info = JSON.parse(line);
 record('p15-mode', info.mode === 'protect' && info.modeLabel === '开启' && info.hooks?.write === 'sync' && info.hooks?.preExecute === 'async' && info.capability === 'normal', 'cold install reports protect/开启 with both hooks', `${info.mode}/${info.modeLabel} capability=${info.capability} write=${info.hooks?.write} pre=${info.hooks?.preExecute}`);
 record('p16-guard-works', info.guardDenied && info.unchanged, 'write into installed live plugin is denied, file untouched', `denied=${info.guardDenied} untouched=${info.unchanged}`);
-const crashDir = path.join(home, 'crash-lore');
+const crashDir = path.join(home, 'lifeguard');
 const rulesFile = path.join(crashDir, 'rules.json');
 const incidentsFile = path.join(crashDir, 'incidents.jsonl');
 let ruleCount = 0;

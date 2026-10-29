@@ -1,12 +1,12 @@
 {
   "format": 1,
   "title": {
-    "en": "dsh-crash-lore",
-    "zh": "dsh-crash-lore"
+    "en": "dsh-lifeguard",
+    "zh": "dsh-lifeguard"
   },
   "description": {
-    "en": "A one-plugin index for dsh-crash-lore. Add this URL as an index source in Plugins → Discover.",
-    "zh": "dsh-crash-lore 的单插件索引。在「插件 → 发现 → 索引源」里添加这个地址即可。"
+    "en": "A one-plugin index for dsh-lifeguard. Add this URL as an index source in Plugins → Discover.",
+    "zh": "dsh-lifeguard 的单插件索引。在「插件 → 发现 → 索引源」里添加这个地址即可。"
   },
   "metadata": {
     "categories": {
@@ -28,24 +28,26 @@
   },
   "plugins": [
     {
-      "name": "dsh-crash-lore",
+      "name": "dsh-lifeguard",
       "title": {
-        "en": "Crash Lore",
-        "zh": "崩溃防线"
+        "en": "DSH Lifeguard",
+        "zh": "DSH 守护"
       },
       "description": {
-        "en": "Mines the host's real crash logs into 28 concise hard constraints, runs a 33-check static preflight on a plugin source directory before install (syntax, duplicate patch ids, ESM require, the tools.register output contract), quarantines a repeat crash culprit with a reversible backup, and hands a huge session over to a fresh one (the brief is written by a model that reads the original transcript; the original is archived, not deleted).",
-        "zh": "把宿主真实崩溃日志沉淀成 28 条精简硬约束（事件回调必须自己兜住异常、一个必填配置缺失就起不来、client 入口没激活会让 boot 整体失败），装插件前对源码目录跑静态预检——33 项结构检查，含 node --check、patch 同 id 重复、ESM 里写 require、以及 tools.register 必须声明 output 的契约——宿主反复崩溃时用可撤销的备份隔离元凶，而不是手改 profile。目录干净退出码 0，有致命/起不来项退出码 1。还有「化龙妙法」：把大会话转世成新会话，交接单由模型读懂原会话后写，原会话归档可回看。"
+        "en": "Turns the host's real crash logs into concise hard constraints: a static preflight before a plugin installs, a conflict check afterwards, a controlled self-heal when the harness will not start — plus handing a huge session over to a fresh one, with the brief written by a model that reads the original transcript and the original archived rather than deleted.",
+        "zh": "把宿主真实崩溃日志沉淀成精简硬约束：装插件前静态预检拦崩，装完体检冲突，起不来时受控自愈；大会话还能转世成新会话，交接单由模型读懂原会话后写，原会话归档可回看，不删。"
       },
-      "icon": "https://raw.githubusercontent.com/regrevia/dsh-crash-lore/main/icon.png",
+      "icon": "https://raw.githubusercontent.com/regrevia/dsh-lifeguard/main/icon.png",
       "repository": {
-        "url": "https://github.com/regrevia/dsh-crash-lore"
+        "url": "https://github.com/regrevia/dsh-lifeguard"
       },
       "metadata": {
         "category": "dev",
         "keywords": [
-          "crash",
+          "lifeguard",
           "preflight",
+          "crash",
+          "handoff",
           "doctor",
           "plugin-safety",
           "harness"
@@ -56,68 +58,8 @@
       },
       "versions": [
         {
-          "version": "0.1.0",
-          "publishTimestamp": 1793189905,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.1"
-          }
-        },
-        {
-          "version": "0.1.1",
-          "publishTimestamp": 1793191220,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.1"
-          }
-        },
-        {
-          "version": "0.1.2",
-          "publishTimestamp": 1793194400,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.1"
-          }
-        },
-        {
-          "version": "0.5.0",
-          "publishTimestamp": 1793262326,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.1"
-          }
-        },
-        {
-          "version": "0.5.1",
-          "publishTimestamp": 1793262655,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.1"
-          }
-        },
-        {
-          "version": "0.5.2",
-          "publishTimestamp": 1793266255,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.1"
-          }
-        },
-        {
-          "version": "0.5.3",
-          "publishTimestamp": 1793270174,
+          "version": "0.6.0",
+          "publishTimestamp": 0,
           "source": {
             "type": "npm"
           },

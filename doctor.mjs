@@ -1,5 +1,5 @@
 /**
- * dsh-crash-lore doctor: 崩溃后把真凶插件从 profile 里安全摘掉。
+ * dsh-lifeguard doctor: 崩溃后把真凶插件从 profile 里安全摘掉。
  *
  * 纯 Node、零依赖、import 无副作用。被 cli.mjs 的 `doctor` 子命令调用：
  *
@@ -13,7 +13,7 @@
  * - cordis.patch.yml 只给「id/name 指向真凶」的 YAML 条目整块加 `# `，
  *   其余行逐字节保留；文件结构看不懂（Tab 缩进、会切成空文档）就整体放弃，
  *   绝不半写；
- * - 隔离记录追加到 $DSH_HOME/crash-lore/state.json 的 quarantine，
+ * - 隔离记录追加到 $DSH_HOME/lifeguard/state.json 的 quarantine，
  *   保留 scanned 等其它键（走 core.readState/writeState）。
  */
 
@@ -387,7 +387,7 @@ function describe(plan, dryRun) {
     const names = plan.plan.backups.map((file) => path.basename(file)).join('、');
     lines.push(`- 备份：${dir}/${names}`);
   }
-  lines.push(`- 记入隔离清单：${path.join(plan.home, 'crash-lore', 'state.json')}`);
+  lines.push(`- 记入隔离清单：${paths(plan.home).state}`);
   if (dryRun) lines.push('未改动任何文件；加 --yes 才执行。');
   return lines;
 }
@@ -395,7 +395,7 @@ function describe(plan, dryRun) {
 function conclusion(plan) {
   const patchText = plan.plan.patch ? `，cordis.patch.yml 注释 ${plan.plan.patch.entries.length} 处` : '';
   const backupDir = plan.plan.backups.length ? path.dirname(plan.plan.backups[0]) : plan.profileDir;
-  return `已隔离 ${plan.plan.name}：从依赖/bundles 移除${patchText}；备份在 ${backupDir}（*.bak-doctor-*）；重启 DSH 生效；撤销用 dsh-crash-lore doctor --restore ${plan.plan.name}`;
+  return `已隔离 ${plan.plan.name}：从依赖/bundles 移除${patchText}；备份在 ${backupDir}（*.bak-doctor-*）；重启 DSH 生效；撤销用 dsh-lifeguard doctor --restore ${plan.plan.name}`;
 }
 
 /**

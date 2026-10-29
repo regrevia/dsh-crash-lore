@@ -6,7 +6,7 @@
  */
 import { writeFileSync } from 'node:fs';
 
-export const name = 'dsh-crash-lore-resolve-probe';
+export const name = 'dsh-lifeguard-resolve-probe';
 export const inject = ['tools'];
 
 const BAD = '# not valid javascript\n';

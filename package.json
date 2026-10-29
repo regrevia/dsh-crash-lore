@@ -1,6 +1,6 @@
 {
-  "name": "dsh-crash-lore",
-  "version": "0.5.3",
+  "name": "dsh-lifeguard",
+  "version": "0.6.0",
   "description": "把 DSH 真实崩溃日志沉淀成精简约束：装插件前静态预检拦崩、装完体检冲突，起不来时受控自愈",
   "type": "module",
   "exports": {
@@ -17,7 +17,7 @@
     "./client": "./client.js"
   },
   "bin": {
-    "crash-lore": "./cli.mjs"
+    "lifeguard": "./cli.mjs"
   },
   "files": [
     "index.js",
@@ -56,11 +56,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/regrevia/dsh-crash-lore.git"
+    "url": "git+https://github.com/regrevia/dsh-lifeguard.git"
   },
-  "homepage": "https://github.com/regrevia/dsh-crash-lore",
+  "homepage": "https://github.com/regrevia/dsh-lifeguard",
   "bugs": {
-    "url": "https://github.com/regrevia/dsh-crash-lore/issues"
+    "url": "https://github.com/regrevia/dsh-lifeguard/issues"
   },
   "license": "MIT",
   "keywords": [

@@ -17,7 +17,7 @@ import {
   lastPreflightStatus,
 } from '../defense.mjs';
 
-function tmp(prefix = 'crash-lore-defense-') {
+function tmp(prefix = 'lifeguard-defense-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
@@ -99,7 +99,7 @@ test('a write that introduces a top-level throw into a live plugin is refused', 
     { name: 'write', arguments: { file_path: path.join(linked, 'index.js'), content: "throw new Error('boom at import');\n" } },
     { surfaces, onDeny: (finding, surface, file, text) => seen.push({ finding, surface, file, text }) },
   );
-  assert.match(reason, /^\[CRASH_LORE_BLOCKED\]/);
+  assert.match(reason, /^\[LIFEGUARD_BLOCKED\]/);
   assert.match(reason, /P014/);
   assert.match(reason, /本次操作未执行/);
   assert.match(reason, /建议：/);
@@ -153,13 +153,13 @@ test('only deleting/moving a live root is refused; single files inside it are fi
   assert.equal(call(`rm ${linked}/index.js.bak`), undefined);
   assert.equal(call(`rm -rf ${linked}/dist`), undefined);
 
-  assert.match(call(`rm -rf ${linked}`), /CRASH_LORE_BLOCKED/);
-  assert.match(call(`rm -rf ${profile}`), /CRASH_LORE_BLOCKED/);
-  assert.match(call(`mv ${linked} ${linked}-old`), /CRASH_LORE_BLOCKED/);
+  assert.match(call(`rm -rf ${linked}`), /LIFEGUARD_BLOCKED/);
+  assert.match(call(`rm -rf ${profile}`), /LIFEGUARD_BLOCKED/);
+  assert.match(call(`mv ${linked} ${linked}-old`), /LIFEGUARD_BLOCKED/);
   /* deleting a parent takes the live tree with it */
-  assert.match(call(`rm -rf ${root}`), /CRASH_LORE_BLOCKED/);
+  assert.match(call(`rm -rf ${root}`), /LIFEGUARD_BLOCKED/);
   /* relative target resolved against the command cwd */
-  assert.match(call('rm -rf ../../dev-plugin', profile), /CRASH_LORE_BLOCKED/);
+  assert.match(call('rm -rf ../../dev-plugin', profile), /LIFEGUARD_BLOCKED/);
 
   assert.equal(call('rm -rf /tmp/nothing-here'), undefined);
   assert.equal(call(`cat ${linked}/index.js`), undefined);
@@ -177,7 +177,7 @@ test('install/enable of a candidate with a known crash shape is denied before it
     { surfaces, profileDir: profile },
   );
   assert.equal(decision.kind, 'deny');
-  assert.equal(decision.info.code, 'CRASH_LORE_BLOCKED');
+  assert.equal(decision.info.code, 'LIFEGUARD_BLOCKED');
   assert.equal(decision.info.rule, 'P014');
   assert.match(decision.reason, /安装/);
 
@@ -349,7 +349,7 @@ test('set_bundle refuses with 未检查 when the enabled content cannot be opene
 test('the same relative path is judged per originating session directory', () => {
   const { profile, root, linked } = fixtureProfile();
   const surfaces = liveSurfaces(profile);
-  const other = tmp('crash-lore-other-session-');
+  const other = tmp('lifeguard-other-session-');
   const agentIn = { session: { header: { cwd: path.dirname(linked) } } };
   const agentOut = { session: { header: { cwd: other } } };
   const call = (agent) => guardWrite(
@@ -387,7 +387,7 @@ test('disabling a live entry removes it from the protection scope after refresh'
 
 /** A plugin whose own bundle patch is the only thing it contributes (cold-install shape). */
 function coldInstallFixture() {
-  const root = tmp('crash-lore-cold-');
+  const root = tmp('lifeguard-cold-');
   const profile = path.join(root, 'profile');
   const plugin = path.join(root, 'own-bundled');
   write(path.join(plugin, 'package.json'), JSON.stringify({
@@ -421,7 +421,7 @@ test('a self-bundling plugin is live even when the profile declares no bundles',
 
 /** Twenty entry files of a size that makes the install budget observable. */
 function installCandidate({ broken = false, bytes = 400 * 1024 } = {}) {
-  const dir = tmp('crash-lore-candidate-');
+  const dir = tmp('lifeguard-candidate-');
   write(path.join(dir, 'package.json'), JSON.stringify({ name: 'candidate', version: '1.0.0', type: 'module' }));
   for (let i = 0; i < 20; i += 1) {
     const lines = [];

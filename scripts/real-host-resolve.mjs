@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const fixture = path.join(repoRoot, 'scripts', 'fixtures', 'resolve-probe');
-const secondPluginName = 'dsh-crash-lore-second-probe';
+const secondPluginName = 'dsh-lifeguard-second-probe';
 const protectedFile = path.join(repoRoot, 'index.js');
 const json = process.argv.includes('--json');
 const checks = [];
@@ -108,7 +108,7 @@ function main() {
      * from the installed profile entries, not from this package's own root. */
     mkdirSync(secondRoot, { recursive: true });
     writeFileSync(path.join(secondRoot, 'package.json'), JSON.stringify({ name: secondPluginName, version: '0.0.0', private: true, type: 'module', main: 'index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }, null, 2));
-    writeFileSync(path.join(secondRoot, 'cordis.patch.yml'), '- insert:\n    - id: crash-lore-second-probe\n      name: dsh-crash-lore-second-probe\n      config: {}\n');
+    writeFileSync(path.join(secondRoot, 'cordis.patch.yml'), '- insert:\n    - id: lifeguard-second-probe\n      name: dsh-lifeguard-second-probe\n      config: {}\n');
     writeFileSync(secondEntry, 'export function apply() {}\n');
     const secondBefore = sha(secondEntry);
     const addSecond = run(['plugin', '--profile', 'lab', 'add', `link:${secondRoot}`], { DSH_HOME: home });
@@ -123,13 +123,13 @@ function main() {
      * guard must land on the same rule id. */
     const parityDir = path.join(home, 'parity-plugin');
     mkdirSync(parityDir, { recursive: true });
-    writeFileSync(path.join(parityDir, 'package.json'), JSON.stringify({ name: 'dsh-crash-lore-parity-probe', version: '0.0.0', private: true, type: 'module', main: 'index.js' }, null, 2));
+    writeFileSync(path.join(parityDir, 'package.json'), JSON.stringify({ name: 'dsh-lifeguard-parity-probe', version: '0.0.0', private: true, type: 'module', main: 'index.js' }, null, 2));
     writeFileSync(path.join(parityDir, 'index.js'), '# not valid javascript\n');
     const cliCheck = spawnSync(process.execPath, [path.join(repoRoot, 'cli.mjs'), 'check', parityDir], { encoding: 'utf8', timeout: 120000 });
     const cliOut = `${cliCheck.stdout ?? ''}${cliCheck.stderr ?? ''}`;
 
     const dump = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
-    add('loader composes all three entries', /\n- id: crash-lore\n/.test(dump.out) && /\n- id: crash-lore-resolve-probe\n/.test(dump.out) && /\n- id: crash-lore-second-probe\n/.test(dump.out), '');
+    add('loader composes all three entries', /\n- id: lifeguard\n/.test(dump.out) && /\n- id: lifeguard-resolve-probe\n/.test(dump.out) && /\n- id: lifeguard-second-probe\n/.test(dump.out), '');
 
     const bootEnv = {
       DSH_HOME: home,
@@ -165,9 +165,9 @@ function main() {
     add('absolute path to the protected file is denied', byLabel['absolute-deny']?.isError === true && /P013/.test(text('absolute-deny')), '');
     add('session-relative path is denied too', byLabel['relative-deny']?.isError === true && /P013/.test(text('relative-deny')), text('relative-deny').slice(0, 120));
     add('symlinked path is denied too', byLabel['symlink-deny']?.isError === true && /P013/.test(text('symlink-deny')), text('symlink-deny').slice(0, 120));
-    add('denials come from this plugin', ['absolute-deny', 'relative-deny', 'symlink-deny'].every((label) => /CRASH_LORE_BLOCKED/.test(text(label)) && /dsh-crash-lore/.test(text(label))), '');
+    add('denials come from this plugin', ['absolute-deny', 'relative-deny', 'symlink-deny'].every((label) => /LIFEGUARD_BLOCKED/.test(text(label)) && /dsh-lifeguard/.test(text(label))), '');
     add('benign write through a symlink still lands', byLabel['scratch-symlink-benign']?.isError === false && readFileSync(scratch, 'utf8').includes('through a symlink'), '');
-    add('second plugin\'s entry is denied too (scope from the profile)', byLabel['second-plugin-deny']?.isError === true && /P013/.test(text('second-plugin-deny')) && /CRASH_LORE_BLOCKED/.test(text('second-plugin-deny')), text('second-plugin-deny').slice(0, 120));
+    add('second plugin\'s entry is denied too (scope from the profile)', byLabel['second-plugin-deny']?.isError === true && /P013/.test(text('second-plugin-deny')) && /LIFEGUARD_BLOCKED/.test(text('second-plugin-deny')), text('second-plugin-deny').slice(0, 120));
     add('second plugin file byte-identical afterwards', secondBefore === sha(secondEntry), `${secondBefore.slice(0, 16)} → ${sha(secondEntry).slice(0, 16)}`);
     add('benign write beside the second plugin lands', byLabel['second-plugin-benign']?.isError === false && existsSync(secondBenign), '');
     add('protected file is byte-identical afterwards', before === sha(protectedFile), `${before.slice(0, 16)} → ${sha(protectedFile).slice(0, 16)}`);

@@ -81,6 +81,33 @@ test('buildBrief 有来源、重点段落，且总长封顶', () => {
   assert.ok(full.text.includes('<repo>/client.js') || full.text.includes('client.js'));
   assert.ok(full.text.includes('read×2'));
   assert.equal(full.title, '状态圈');
+  for (const heading of ['## 当前目标', '## 持续约束', '## 已确认的决定', '## 已验证的结果', '## 走不通的路', '## 未完成 / 下一步', '## 工作目录与产物位置']) {
+    assert.ok(full.text.includes(heading), heading);
+  }
+  assert.match(full.text, /把底部状态圈换成圆环/);
+  assert.match(full.text, /用户决定/);
+  assert.match(full.text, /失败：/);
+});
+
+test('buildBrief 跨代保真：只发「继续」也不丢上一代的目标和约束', () => {
+  const inherited = [
+    '## 当前目标',
+    '- 把底部状态圈换成圆环',
+    '## 持续约束',
+    '- 不得改 index.js',
+    '## 未完成 / 下一步',
+    '- 跑 node --test',
+  ].join('\n');
+  const brief = buildBrief({
+    parentId: 'session-2',
+    events: [{ type: 'user/message', data: { message: { content: [{ type: 'text', text: '继续' }] } } }],
+    ancestors: [{ generation: 1, child: 'g1', title: '爷爷', brief: inherited }],
+  });
+  assert.match(brief.text, /把底部状态圈换成圆环/);
+  assert.match(brief.text, /不得改 index\.js/);
+  assert.match(brief.text, /继承自第 1 代交接单/);
+  assert.match(brief.text, /跑 node --test/);
+  assert.match(brief.text, /继续/);
 });
 
 test('buildBrief 空会话不炸，标题走兜底', () => {
@@ -94,17 +121,17 @@ test('deriveTitle 取最近一条人话的首行', () => {
   assert.equal(deriveTitle(facts), '顺便把 85% 变红也加上');
 });
 
-const tmpHome = () => fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-handoff-'));
+const tmpHome = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-handoff-'));
 
 test('appendLineage 落盘、可读、坏行跳过', () => {
   const home = tmpHome();
   try {
     appendLineage(home, { child: 'b', parent: 'a', generation: 1, at: 1, title: 't' });
-    fs.appendFileSync(path.join(home, 'lineage.jsonl'), '{坏行\n');
+    fs.appendFileSync(path.join(home, 'lifeguard', 'lineage.jsonl'), '{坏行\n');
     appendLineage(home, { child: 'c', parent: 'b', generation: 2, at: 2, title: 't2' });
     const rows = readLineage(home);
     assert.deepEqual(rows.map((row) => row.child), ['b', 'c']);
-    assert.equal(fs.existsSync(path.join(home, 'lineage.jsonl.tmp')), false);
+    assert.equal(fs.existsSync(path.join(home, 'lifeguard', 'lineage.jsonl.tmp')), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -176,6 +203,22 @@ test('buildEvidence 摊开人话与工具，失败结果带原文', () => {
   assert.equal(stats.chars, text.length);
 });
 
+test('buildEvidence 长结果留头留尾：尾部失败统计与 isError 都不丢', () => {
+  const long = `开头：node --test 输出\n${'x'.repeat(1200)}\nFAIL 2 项，205 通过，0 失败`;
+  const { text, stats } = buildEvidence({
+    events: [
+      { type: 'tool/call', data: { name: 'bash', arguments: '{"command":"node --test"}' } },
+      { type: 'tool/result', data: { message: { isError: true, content: [{ type: 'text', text: long }] } } },
+    ],
+    limit: 4000,
+  });
+  assert.match(text, /失败：/);
+  assert.match(text, /开头：node --test 输出/);
+  assert.match(text, /FAIL 2 项，205 通过，0 失败/);
+  assert.match(text, /中间省略/);
+  assert.equal(stats.failed, 1);
+});
+
 test('buildEvidence 超预算从最近往回留，但第一条需求保住', () => {
   const long = Array.from({ length: 40 }, (_, index) => ({
     type: 'user/message',
@@ -197,7 +240,7 @@ test('buildEvidence 空事件不炸，默认上限是 EVIDENCE_MAX', () => {
 
 test('handoffSystemPrompt 要求分节且禁止编造', () => {
   const prompt = handoffSystemPrompt();
-  for (const heading of ['## 目标', '## 结论', '## 走不通的路', '## 改动', '## 未完成与下一步', '## 风险与注意']) {
+  for (const heading of ['## 当前目标', '## 持续约束', '## 已确认的决定', '## 已验证的结果', '## 走不通的路', '## 未完成 / 下一步', '## 工作目录与产物位置']) {
     assert.ok(prompt.includes(heading), heading);
   }
   assert.match(prompt, /只输出交接单正文/);
@@ -226,10 +269,11 @@ test('buildLlmBrief 带上来源、模型、血缘，并让新会话先停住', 
   const brief = buildLlmBrief({
     parentId: 'p1',
     parentTitle: '改造状态圈',
-    body: '## 目标\n把圆环做成红色告警',
+    body: '## 当前目标\n把圆环做成红色告警\n## 持续约束\n不得改 index.js\n## 未完成 / 下一步\n跑 node --test',
     facts: { turns: 7 },
     model: { provider: 'deepseek', model: 'v4' },
     ancestors: [{ generation: 1, child: 'g1', title: '爷爷' }],
+    finish: 'stop',
   });
   assert.match(brief.text, /【化龙妙法 · 交接单】/);
   assert.match(brief.text, /来源会话：p1（改造状态圈）/);
@@ -241,10 +285,29 @@ test('buildLlmBrief 带上来源、模型、血缘，并让新会话先停住', 
   assert.equal(brief.title, '改造状态圈');
 });
 
-test('buildLlmBrief 空正文与超长正文都有兜底', () => {
-  const empty = buildLlmBrief({ parentId: 'p', body: '  ', facts: { turns: 0 } });
-  assert.match(empty.text, /模型没有给出可用的交接单/);
-  assert.equal(empty.title, '未命名会话');
-  const long = buildLlmBrief({ parentId: 'p', body: 'x'.repeat(BRIEF_LLM_MAX * 2), facts: { turns: 1 } });
-  assert.ok(long.text.length <= BRIEF_LLM_MAX + 2000);
+test('buildLlmBrief 验收：空正文、被截断、没正常结束、段落太少都不算成稿', () => {
+  const body = '## 当前目标\n做事\n## 未完成 / 下一步\n再跑一遍';
+  assert.throws(() => buildLlmBrief({ parentId: 'p', body: '  ', facts: { turns: 0 } }), /模型返回的是空的/);
+  assert.throws(
+    () => buildLlmBrief({ parentId: 'p', body: 'x'.repeat(BRIEF_LLM_MAX * 2), facts: { turns: 1 }, finish: 'stop' }),
+    /截断/,
+  );
+  assert.throws(
+    () => buildLlmBrief({ parentId: 'p', body, facts: { turns: 1 }, finish: 'length' }),
+    /没有正常结束（length）/,
+  );
+  assert.throws(() => buildLlmBrief({ parentId: 'p', body: '## 当前目标\n只有目标', facts: { turns: 1 } }), /至少两类/);
+  try {
+    buildLlmBrief({ parentId: 'p', body, facts: { turns: 1 }, finish: 'length' });
+    assert.fail('应当拒绝');
+  } catch (error) {
+    assert.equal(error.code, 'HANDOFF_BODY_REJECTED');
+    assert.ok(error.reason.length > 0);
+  }
+  /* 没有 finish 标记时，命中两类标记照样收；正文没被截断。 */
+  const ok = buildLlmBrief({ parentId: 'p', body, facts: { turns: 1 } });
+  assert.match(ok.text, /## 交接单/);
+  assert.match(ok.text, /再跑一遍/);
+  assert.match(ok.text, /先只回复「收到」/);
+  assert.equal(ok.title, '未命名会话');
 });

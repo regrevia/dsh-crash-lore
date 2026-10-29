@@ -4,7 +4,7 @@
  * instead of in every prompt. One timer, removed with the slot.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-crash-lore',
+  id: 'dsh-lifeguard',
   factory(load) {
     const React = load('react');
     const h = React.createElement;
@@ -17,6 +17,8 @@ window.__ModuleLoader__.load({
     const WARN = 70;
     const RED = '#e5484d';
     const AMBER = '#d9930d';
+    /* 感叹号字号，只给字形用。 */
+    const MARK_FONT = 9;
 
     function colorOf(pct) {
       if (pct >= DANGER) return RED;
@@ -35,11 +37,13 @@ window.__ModuleLoader__.load({
       const pct = Math.max(0, Math.min(100, props.pct));
       const color = colorOf(pct);
       const danger = pct >= DANGER;
-      const arc = h('circle', { key: 'arc', cx: SIZE / 2, cy: SIZE / 2, r: RADIUS, fill: 'none', stroke: color, strokeWidth: STROKE, strokeLinecap: 'round', strokeDasharray: CIRCUMFERENCE, strokeDashoffset: CIRCUMFERENCE * (1 - pct / 100), transform: `rotate(-90 ${SIZE / 2} ${SIZE / 2})` });
+      /* 越松越淡，接近告警才回实色。 */
+      const weight = danger ? 1 : pct >= WARN ? 0.8 : pct >= 50 ? 0.5 : 0.32;
+      const arc = h('circle', { key: 'arc', cx: SIZE / 2, cy: SIZE / 2, r: RADIUS, fill: 'none', stroke: color, strokeWidth: STROKE, strokeLinecap: 'round', strokeDasharray: CIRCUMFERENCE, strokeDashoffset: CIRCUMFERENCE * (1 - pct / 100), opacity: weight, transform: `rotate(-90 ${SIZE / 2} ${SIZE / 2})` });
       const track = h('circle', { key: 'track', cx: SIZE / 2, cy: SIZE / 2, r: RADIUS, fill: 'none', stroke: 'currentColor', strokeWidth: STROKE, opacity: 0.22 });
       const parts = [track, arc];
       /* 字号 9、抬半像素：感叹号才不压到圈线。 */
-      if (danger) parts.push(h('text', { key: 'mark', x: SIZE / 2, y: SIZE / 2 - 0.5, textAnchor: 'middle', dominantBaseline: 'central', fontSize: 9, fontWeight: 800, fill: color }, '!'));
+      if (danger) parts.push(h('text', { key: 'mark', x: SIZE / 2, y: SIZE / 2 - 0.5, textAnchor: 'middle', dominantBaseline: 'central', fontSize: MARK_FONT, fontWeight: 800, fill: color }, '!'));
       return h('svg', { width: SIZE, height: SIZE, viewBox: `0 0 ${SIZE} ${SIZE}`, 'aria-hidden': true, style: { display: 'block', flex: 'none' } }, parts);
     }
 
@@ -50,7 +54,7 @@ window.__ModuleLoader__.load({
         let alive = true;
         const pull = () => {
           Promise.resolve()
-            .then(() => fetch('/crash-lore/health', { cache: 'no-store' }))
+            .then(() => fetch('/lifeguard/health', { cache: 'no-store' }))
             .then((response) => (response.ok ? response.json() : null))
             .then((payload) => {
               if (alive && payload && payload.enabled) setState(payload);
@@ -81,7 +85,7 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         ctx.slots.inject('conversation.composer.dock', () =>
-          ctx.slots.register({ name: 'conversation.composer.dock', id: 'crash-lore-health', order: 40 }, Health),
+          ctx.slots.register({ name: 'conversation.composer.dock', id: 'lifeguard-health', order: 40 }, Health),
         );
       },
     };

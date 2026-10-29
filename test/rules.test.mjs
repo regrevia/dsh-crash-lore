@@ -18,7 +18,7 @@ function write(file, text) {
 
 /** A profile with one linked plugin that is live, so every rule is judged in the runtime's own terms. */
 function liveProfile() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-rules-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-rules-'));
   const profile = path.join(root, 'profiles', 'desktop');
   const plugin = path.join(root, 'plugin');
   write(path.join(plugin, 'package.json'), JSON.stringify({ name: 'plugin', version: '1.0.0', type: 'module' }));

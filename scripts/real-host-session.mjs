@@ -150,7 +150,7 @@ function main() {
     add('plugin copy installed into the throwaway profile', /Done in \d+ms/.test(installed.out), installed.out.trim().split('\n').pop() || String(created.status));
 
     const dump = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
-    add('loader composes the plugin entry', /\n- id: crash-lore\n/.test(dump.out));
+    add('loader composes the plugin entry', /\n- id: lifeguard\n/.test(dump.out));
 
     /* Session A: run the fatal write, quote the denial, then do the repair work. */
     /* A real model turn is nondeterministic: some rollouts explore the repo docs first and
@@ -173,18 +173,18 @@ function main() {
       sessionA = run(['--profile', 'lab', promptA], env);
       if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, `A${attempt}.log`), sessionA.out);
       outA = sessionA.out;
-      if (/CRASH_LORE_BLOCKED/.test(sessionA.out)) break;
+      if (/LIFEGUARD_BLOCKED/.test(sessionA.out)) break;
     }
     const shaAtDenial = sha(target);
     add('session A completed a real model turn', sessionA.status === 0 && /DONE\s*$/m.test(outA), `${sessionA.ms} ms · attempt ${attemptsA}/3`);
 
-    const denyAt = outA.search(/CRASH_LORE_BLOCKED/);
+    const denyAt = outA.search(/LIFEGUARD_BLOCKED/);
     const doneAt = outA.lastIndexOf('DONE');
     add('session A received the deny instead of executing the fatal write', denyAt >= 0, denyAt >= 0 ? `offset ${denyAt}` : `no denial in ${attemptsA} attempt(s)`);
     add('denial names rule P018 and the process.exit evidence', /P018/.test(outA) && /process\.exit/.test(outA));
     add('denial carries a repair suggestion', /建议：|dispose\(\)|清理/.test(outA));
     add('the same session continued after the denial', denyAt >= 0 && doneAt > denyAt, 'DONE after the deny');
-    add('the model quoted the denial back to the caller', /CRASH_LORE_BLOCKED/.test(outA) && /仍可以继续|仍可以|修法|清理/.test(outA));
+    add('the model quoted the denial back to the caller', /LIFEGUARD_BLOCKED/.test(outA) && /仍可以继续|仍可以|修法|清理/.test(outA));
     add('fatal write never landed on the live file (session A)', shaAtDenial === before, `${before.slice(0, 16)} → ${shaAtDenial.slice(0, 16)}`);
     restore();
 
@@ -200,7 +200,7 @@ function main() {
     const outB = sessionB.out;
     if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'B.log'), outB);
     add('a second session starts and finishes on its own', sessionB.status === 0 && /DONE2\s*$/m.test(outB), `${sessionB.ms} ms`);
-    add('the second session is denied too (denial is per call)', /CRASH_LORE_BLOCKED/.test(outB) && /P018/.test(outB));
+    add('the second session is denied too (denial is per call)', /LIFEGUARD_BLOCKED/.test(outB) && /P018/.test(outB));
     add('the second session survives the denial', /DONE2\s*$/m.test(outB));
     add('both sessions left the live file byte-identical', sha(target) === before, `${sha(target).slice(0, 16)}`);
 
@@ -216,7 +216,7 @@ function main() {
     const outC = sessionC.out;
     if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'C.log'), outC);
     add('a PTC-mode session runs tool calls only through run_code', sessionC.status === 0 && /DONEPTC\s*$/m.test(outC), `${sessionC.ms} ms`);
-    add('the PTC sub-call is denied by the same guard', /CRASH_LORE_BLOCKED/.test(outC) && /P018/.test(outC));
+    add('the PTC sub-call is denied by the same guard', /LIFEGUARD_BLOCKED/.test(outC) && /P018/.test(outC));
     add('the denial reaches the calling session as tool feedback', /DONEPTC\s*$/m.test(outC));
     add('the PTC sub-call left the live file untouched', sha(target) === before, `${sha(target).slice(0, 16)}`);
 
@@ -227,13 +227,13 @@ function main() {
       /* The plugin is installed as a bundle, so its entry comes from the package's own
        * patch layer; a mode change is an id-targeted override in the profile patch. */
       const lines = readFileSync(patchFile, 'utf8').split('\n').filter((line) => line.trim() !== '[]');
-      const start = lines.findIndex((line) => line.trim() === '- id: crash-lore');
+      const start = lines.findIndex((line) => line.trim() === '- id: lifeguard');
       if (start >= 0) {
         let end = start + 1;
         while (end < lines.length && !/^- (id|group|insert|disabled|isolate):/.test(lines[end])) end += 1;
         lines.splice(start, end - start);
       }
-      const body = ['- id: crash-lore', '  config:', `    mode: ${mode}`, ''];
+      const body = ['- id: lifeguard', '  config:', `    mode: ${mode}`, ''];
       writeFileSync(patchFile, `${lines.join('\n').replace(/\n+$/, '')}\n${body.join('\n')}`);
       return true;
     };
@@ -248,12 +248,12 @@ function main() {
     if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'PATCH.log'), readFileSync(patchFile));
     const dumped = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
     if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'DUMP.log'), dumped.out);
-    add('the live profile config carries mode=observe', switched && /id: crash-lore[\s\S]{0,120}mode:\s*observe/.test(dumped.out));
+    add('the live profile config carries mode=observe', switched && /id: lifeguard[\s\S]{0,120}mode:\s*observe/.test(dumped.out));
     restore();
     const sessionD = run(['--profile', 'lab', modePrompt('仅监测')], env);
     const outD = `${sessionD.out}`;
     if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'D.log'), outD);
-    add('observe mode lets the risky write land instead of blocking', sessionD.status === 0 && !/CRASH_LORE_BLOCKED/.test(outD) && sha(target) !== before, `sha ${sha(target).slice(0, 16)}`);
+    add('observe mode lets the risky write land instead of blocking', sessionD.status === 0 && !/LIFEGUARD_BLOCKED/.test(outD) && sha(target) !== before, `sha ${sha(target).slice(0, 16)}`);
     add('observe mode records the finding', /崩溃防护发现风险|观察到风险/.test(outD));
     add('observe-mode session survives to its own end', /DONE仅监测\s*$/m.test(outD), `${sessionD.ms} ms`);
 
@@ -262,7 +262,7 @@ function main() {
     const sessionE = run(['--profile', 'lab', modePrompt('关闭')], env);
     const outE = `${sessionE.out}`;
     if (process.env.CL_SESSION_TRACE) writeFileSync(path.join(process.env.CL_SESSION_TRACE, 'E.log'), outE);
-    add('off mode lets the risky write land too', sessionE.status === 0 && !/CRASH_LORE_BLOCKED/.test(outE) && sha(target) !== before);
+    add('off mode lets the risky write land too', sessionE.status === 0 && !/LIFEGUARD_BLOCKED/.test(outE) && sha(target) !== before);
     add('off mode records nothing', !/崩溃防护发现风险|观察到风险/.test(outE));
     add('off-mode session survives to its own end', /DONE关闭\s*$/m.test(outE), `${sessionE.ms} ms`);
     setLabMode('protect');

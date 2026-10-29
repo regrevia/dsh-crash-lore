@@ -8,6 +8,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Whole matrix job stays inside the 10-minute CI budget (measured locally: cold install ~1s,
+    # pack manifest check ~0.2s; most of the budget is npm test).
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -19,5 +22,17 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Unit tests (no network, synthetic fixtures only)
         run: npm test
+      # 0.5.0 shipped a tarball without handoff.mjs and every user install hit
+      # ERR_MODULE_NOT_FOUND. These two gates read the real `npm pack` output, so a file that is
+      # missing from package.json "files" fails here instead of at a user's machine.
+      - name: Package manifest contains handoff.mjs, index.js, client.js, core.mjs, cordis.patch.yml
+        timeout-minutes: 3
+        run: node test/integration/pack-check.mjs
+      - name: Cold install from tarball into a throw-away profile
+        # Builds the exact tarball, installs it, boots it, and asserts 28 things
+        # (files present, imports closed, no author paths, guard active, no author incidents).
+        # No network needed: local tarball, no dependencies, throw-away DSH_HOME/HOME in tmpdir.
+        timeout-minutes: 8
+        run: node test/integration/cold-install.mjs
       - name: Preflight this plugin with its own guard
         run: node cli.mjs check .

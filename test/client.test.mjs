@@ -17,9 +17,9 @@ test('client bundle parses and registers the health ring in the composer dock', 
   const source = await text('client.js');
   assert.doesNotThrow(() => new Function(source));
   assert.match(source, /__ModuleLoader__\.load\(/);
-  assert.match(source, /id: 'dsh-crash-lore'/);
+  assert.match(source, /id: 'dsh-lifeguard'/);
   assert.match(source, /conversation\.composer\.dock/);
-  assert.match(source, /\/crash-lore\/health/);
+  assert.match(source, /\/lifeguard\/health/);
   assert.match(source, /inject: \['slots'\]/);
 });
 

@@ -175,7 +175,7 @@ export function markSurfacesDirty(surfaces) {
 
 /**
  * Crash shapes detectable in one file, without a subprocess. Delegates to the same
- * implementation the CLI uses, so `crash-lore check` and the live guard cannot disagree.
+ * implementation the CLI uses, so `lifeguard check` and the live guard cannot disagree.
  * @param {string} text proposed file content
  * @param {string} file absolute path the content would be written to
  * @returns {null | {ruleId:string, title:string, line:number, message:string, fix:string, snippet:string}}
@@ -242,11 +242,15 @@ function resolverRead(exec, options) {
 }
 
 /** The refusal text the calling agent receives as this call's error result. */
+/* 拦截标记：新版只发 LIFEGUARD_BLOCKED，旧版日志/旧会话里是 CRASH_LORE_BLOCKED，
+ * 读历史记录时两个都认。 */
+export const BLOCKED_MARKER = /\[(?:CRASH_LORE_BLOCKED|LIFEGUARD_BLOCKED)\]/;
+
 export function blockReason({ surface, finding, file, action }) {
   const where = surface?.name && surface.name !== 'profile' ? `插件：${surface.name}\n` : '';
   const loc = file ? `${file}${finding.line ? `:${finding.line}` : ''}` : 'profile';
   const lines = [
-    '[CRASH_LORE_BLOCKED] 本次操作未执行。',
+    '[LIFEGUARD_BLOCKED] 本次操作未执行。',
     '',
     `${where}位置：${loc}`,
     `规则：${finding.ruleId} ${finding.title}`,
@@ -263,7 +267,7 @@ export function blockReason({ surface, finding, file, action }) {
 /** Refusal for a target whose real location cannot be attributed to a directory. */
 export function unresolvedReason(raw, action = '写入') {
   return [
-    '[CRASH_LORE_BLOCKED] 本次操作未执行。',
+    '[LIFEGUARD_BLOCKED] 本次操作未执行。',
     '',
     `位置：${raw}`,
     '规则：unresolved 目标路径无法判定',
@@ -277,8 +281,8 @@ export function denial(reason, finding) {
     kind: 'deny',
     reason,
     info: {
-      name: 'CrashLoreBlocked',
-      code: 'CRASH_LORE_BLOCKED',
+      name: 'LifeguardBlocked',
+      code: 'LIFEGUARD_BLOCKED',
       rule: finding?.ruleId,
       title: finding?.title,
     },
@@ -377,7 +381,7 @@ export function guardShell(exec, options = {}) {
     const live = roots.find((root) => real === root || root.startsWith(`${real}${path.sep}`));
     if (!live) continue;
     const lines = [
-      '[CRASH_LORE_BLOCKED] 本次操作未执行。',
+      '[LIFEGUARD_BLOCKED] 本次操作未执行。',
       '',
       `位置：${target}`,
       '规则：live-delete 删/移动了宿主正在加载的目录',
@@ -485,14 +489,14 @@ function firstBlocking(dir, budgetMs) {
 /** Refusal for a bundle whose enabled content cannot be opened at all. */
 function uninspectedReason(target) {
   return [
-    '[CRASH_LORE_BLOCKED] 本次操作未执行。',
+    '[LIFEGUARD_BLOCKED] 本次操作未执行。',
     '',
     `目标：${target}`,
     '规则：uninspected 未检查',
     '原因：这个 bundle 的启用内容在本地找不到可读的模块目录，因此无法在启用前确认它会不会让宿主起不来。没有检查就放行，等于把风险直接装进 running profile。',
     '建议：三种做法任选其一，做完再提交这次启用：',
     '1) 先把 bundle 装进 profile（plugin_manager install_bundle），让它的模块目录落在 profile 里，再启用；',
-    '2) 在本地准备一个候选副本（复制到临时目录或 link: 到你的开发目录），先用 crash-lore 的 check 跑一遍，确认没有致命/起不来问题；',
+    '2) 在本地准备一个候选副本（复制到临时目录或 link: 到你的开发目录），先用 lifeguard 的 check 跑一遍，确认没有致命/起不来问题；',
     '3) 只想先在别的机器或空 profile 试，就在那边启用，把结果带回来。',
     '你仍可以继续读代码、改开发副本、跑测试。',
   ].join('\n');

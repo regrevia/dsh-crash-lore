@@ -68,7 +68,7 @@ test('dryRun 默认生效：只出计划，一个字节都不写', () => {
 
 test('plan 选中最新、未被隔离、且确实在 profile 里的插件真凶', () => {
   const box = sandbox();
-  const incidentsFile = path.join(box.homeDir, 'crash-lore', 'incidents.jsonl');
+  const incidentsFile = path.join(box.homeDir, 'lifeguard', 'incidents.jsonl');
   const older = {
     id: 'inc_old_good',
     ts: '2025-10-01T00:00:00.000Z',
@@ -108,7 +108,7 @@ test('--yes 真跑：移除依赖与 bundle、注释 patch 条目、留备份、
   assert.ok(patchAfter.includes('# - id: bad-plugin'));
   assert.ok(patchAfter.includes('#     - id: bad-insert'));
   // 无关条目与注释头逐字节保留
-  for (const untouched of ['# crash-lore fixture: 只有 dsh-bad 的条目该被注释，其余逐字节保留', '- id: good-plugin', '  name: "dsh-good"', '    - id: keep-insert', '- id: remote-web-ui']) {
+  for (const untouched of ['# lifeguard fixture: 只有 dsh-bad 的条目该被注释，其余逐字节保留', '- id: good-plugin', '  name: "dsh-good"', '    - id: keep-insert', '- id: remote-web-ui']) {
     assert.ok(patchAfter.includes(untouched), `被误改：${untouched}`);
   }
   assert.equal(added, 8);
@@ -118,7 +118,7 @@ test('--yes 真跑：移除依赖与 bundle、注释 patch 条目、留备份、
   assert.ok(backups.some((name) => name.startsWith('package.json.bak-doctor-')));
   assert.ok(backups.some((name) => name.startsWith('cordis.patch.yml.bak-doctor-')));
 
-  const state = readJson(path.join(box.homeDir, 'crash-lore', 'state.json'));
+  const state = readJson(path.join(box.homeDir, 'lifeguard', 'state.json'));
   assert.deepEqual(state.scanned, { 'keep-me': 1 });
   assert.equal(state.quarantine.length, 1);
   const entry = state.quarantine[0];
@@ -134,7 +134,7 @@ test('重复 doctor：已隔离的真凶不再重复摘，且不产生新改动'
   const first = runDoctor({ home: box.homeDir, profileDir: box.profileDir, yes: true });
   assert.equal(first.action, 'applied');
   // 只留一条真凶 incident，去掉 core 的干扰
-  const incidentsFile = path.join(box.homeDir, 'crash-lore', 'incidents.jsonl');
+  const incidentsFile = path.join(box.homeDir, 'lifeguard', 'incidents.jsonl');
   const lines = read(incidentsFile).trim().split('\n').filter((line) => line.includes('inc_bad_001'));
   fs.writeFileSync(incidentsFile, `${lines.join('\n')}\n`);
   const before = snapshot(box.dir);
@@ -154,7 +154,7 @@ test('restore：依赖、bundle、patch 全部回到原样，隔离记录清空'
   assert.equal(result.action, 'restored');
   assert.equal(read(path.join(box.profileDir, 'package.json')), pkgBefore);
   assert.equal(read(path.join(box.profileDir, 'cordis.patch.yml')), patchBefore);
-  const state = readJson(path.join(box.homeDir, 'crash-lore', 'state.json'));
+  const state = readJson(path.join(box.homeDir, 'lifeguard', 'state.json'));
   assert.equal(state.quarantine.length, 0);
   assert.deepEqual(state.scanned, { 'keep-me': 1 });
 });
@@ -192,12 +192,12 @@ test('真凶只在 patch 里时：只注释 patch，package.json 不重写', () 
   const backups = fs.readdirSync(box.profileDir).filter((name) => name.includes('.bak-doctor-'));
   assert.equal(backups.length, 1);
   assert.ok(backups[0].startsWith('cordis.patch.yml.bak-doctor-'));
-  assert.equal(readJson(path.join(box.homeDir, 'crash-lore', 'state.json')).quarantine.length, 1);
+  assert.equal(readJson(path.join(box.homeDir, 'lifeguard', 'state.json')).quarantine.length, 1);
 });
 
 test('没有插件类真凶时返回 none；profile 读不到时干净失败', () => {
   const box = sandbox();
-  fs.writeFileSync(path.join(box.homeDir, 'crash-lore', 'incidents.jsonl'), `${JSON.stringify({
+  fs.writeFileSync(path.join(box.homeDir, 'lifeguard', 'incidents.jsonl'), `${JSON.stringify({
     id: 'inc_core_only',
     ts: '2025-10-21T00:00:00.000Z',
     kind: 'crash',
@@ -275,7 +275,7 @@ test('restore：只注释过 patch 的隔离也能撤销（patch-only，不要�
   assert.equal(restored.patchOnly, true);
   assert.equal(restored.patchRestored, 2, 'bad-plugin 与 insert 里的 bad-insert 两处都该恢复');
   assert.equal(read(path.join(box.profileDir, 'cordis.patch.yml')), original, 'patch 应逐字节恢复成隔离前');
-  assert.equal(readJson(path.join(box.homeDir, 'crash-lore', 'state.json')).quarantine.length, 0);
+  assert.equal(readJson(path.join(box.homeDir, 'lifeguard', 'state.json')).quarantine.length, 0);
 });
 
 test('写入中途失败：已改的文件回滚，profile 不留半套状态', () => {
@@ -291,13 +291,13 @@ test('写入中途失败：已改的文件回滚，profile 不留半套状态', 
   assert.equal(result.rolledBack, true);
   assert.equal(read(path.join(box.profileDir, 'package.json')), pkgBefore, 'package.json 必须回到原样');
   assert.equal(read(path.join(box.profileDir, 'cordis.patch.yml')), patchBefore);
-  assert.equal((readJson(path.join(box.homeDir, 'crash-lore', 'state.json')).quarantine || []).length, 0, '失败时不写隔离记录');
+  assert.equal((readJson(path.join(box.homeDir, 'lifeguard', 'state.json')).quarantine || []).length, 0, '失败时不写隔离记录');
 });
 
 test('隔离记录按 profile 归属：别的 profile 隔离过同一个插件，不影响这里摘它', () => {
   const box = sandbox();
   /* 同样的真凶，在 work profile 被隔离过；desktop 的 state 不该因此跳过。 */
-  const stateFile = path.join(box.homeDir, 'crash-lore', 'state.json');
+  const stateFile = path.join(box.homeDir, 'lifeguard', 'state.json');
   const state = readJson(stateFile);
   writeJson(stateFile, { ...state, quarantine: [{ name: 'dsh-bad', profile: 'work', at: new Date().toISOString() }] });
   const planned = runDoctor({ home: box.homeDir, profileDir: box.profileDir });

@@ -1,4 +1,4 @@
-# dsh-crash-lore — internal contract (v1)
+# dsh-lifeguard — internal contract (v1)
 
 Purpose: harvest DSH crash artifacts → normalized incidents → compact guard rules ("lore") →
 inject as agent constraints + export to dsh-lite-memory + preflight-check plugin code.
@@ -10,7 +10,7 @@ inject as agent constraints + export to dsh-lite-memory + preflight-check plugin
 - Linux/other fallback: `$DSH_HOME/logs/`, `~/.config/dsh/logs/` — best effort.
 
 ## Store (owned by core.mjs)
-Dir: `$DSH_HOME/crash-lore/` (default `~/.dsh/crash-lore/`)
+Dir: `$DSH_HOME/lifeguard/` (default `~/.dsh/lifeguard/`)
 - `incidents.jsonl` one incident per line
 - `rules.json` `{ "version": 1, "rules": [Rule...] }`
 - `state.json` `{ "scanned": { "<abs artifact path>": <mtimeMs> }, "quarantine": [QuarantineEntry...] }`

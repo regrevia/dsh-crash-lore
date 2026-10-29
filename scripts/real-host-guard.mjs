@@ -19,8 +19,8 @@
  * One unrelated host policy is switched off in the throwaway profile:
  * `fs-observation-policy` (read-before-write). In a real session it would answer the
  * retry with FS_NOT_OBSERVED before the file is touched, which hides whether this
- * plugin allowed the corrected call. Disabling it changes no crash-lore decision: the
- * deny cases are produced by crash-lore's own guard, which runs first).
+ * plugin allowed the corrected call. Disabling it changes no lifeguard decision: the
+ * deny cases are produced by lifeguard's own guard, which runs first).
  *
  * Usage: node scripts/real-host-guard.mjs [--json]
  * Exit: 0 pass, 1 fail, 2 skipped (no DeepSeek Harness app on this machine).
@@ -118,7 +118,7 @@ function main() {
     add('guard-probe fixture installed', /Done in \d+ms/.test(addFixture.out), addFixture.out.trim().split('\n').pop());
 
     const dump = run(['--profile', 'lab', '--dump-config'], { DSH_HOME: home });
-    add('loader composes both entries', /\n- id: crash-lore\n/.test(dump.out) && /\n- id: crash-lore-guard-probe\n/.test(dump.out));
+    add('loader composes both entries', /\n- id: lifeguard\n/.test(dump.out) && /\n- id: lifeguard-guard-probe\n/.test(dump.out));
     add('unrelated read-before-write policy disabled for the loop check', /- id: fs-observation-policy\n  name: '@deepseek-ai\/dsh-fs-observation-policy'[\s\S]{0,80}?disabled: true/.test(dump.out));
 
     const bootEnv = {
@@ -148,7 +148,7 @@ function main() {
     const denied = byLabel['dangerous-syntax'];
     const denial = String(denied?.text ?? denied?.threw ?? '');
     add('dangerous write rejected by the live guard', denied?.isError === true, '');
-    add('denial came from this plugin, not another layer', /CRASH_LORE_BLOCKED/.test(denial) && /dsh-crash-lore/.test(denial), '');
+    add('denial came from this plugin, not another layer', /LIFEGUARD_BLOCKED/.test(denial) && /dsh-lifeguard/.test(denial), '');
     add('denial names the rule and the reason', /P013/.test(denial) && /语法不合法/.test(denial), '');
     add('denial tells the caller what to do next', /建议：/.test(denial) && /仍可以/.test(denial), '');
 

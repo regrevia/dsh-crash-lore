@@ -30,7 +30,7 @@
 - `lib/sessions.mjs`：只读扫描 `$DSH_HOME/sessions`，按会话锁新鲜度（`LOCK_FRESH_MS = 15 min`）区分
   「宿主刚碰过」与「旧锁」；换算 `packed → 堆` 的系数 `RESTORE_FACTOR = 6.2`，由本机实测标定
   （547 MB 压缩 ≈ 3.3 GB 估算，实测峰值 3.2–3.4 GB）。
-- 输出接在 `crash_lore_guard` 与 `crash_lore_scan`：一行列出最大的 3 个会话、总量与估算堆，并单列旧锁数量。
+- 输出接在 `lifeguard_guard` 与 `lifeguard_scan`：一行列出最大的 3 个会话、总量与估算堆，并单列旧锁数量。
   实测输出：`宿主刚碰过 21 个会话（2026/Envoy 89 MB、Desktop/DSH 67 MB、…）：恢复时约占 3.3 GB 堆，用不到的先关。`
 - 阈值 `ceilingRisk`：估算 ≥ 2 GB 才提示，空闲机器不刷屏。
 - 只读：不关会话、不截断、不删记录；旧锁只计数不清理。

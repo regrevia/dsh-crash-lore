@@ -527,7 +527,7 @@
     "title": "同一插件反复把宿主带走：先停用再修，不要带着它重启",
     "signature": "crash-loop",
     "cause": "插件缺陷在启动或首次调用时必现，每次重启都再崩一次，消耗的是同一台机器和同一份日志，修之前重启只会重复事故",
-    "fix": "crash_lore_heal 停用该插件；从源码改掉触发点、crash_lore_check 预检通过后再启用；别把崩溃循环当偶发",
+    "fix": "lifeguard_heal 停用该插件；从源码改掉触发点、lifeguard_check 预检通过后再启用；别把崩溃循环当偶发",
     "guard": null,
     "severity": "fatal",
     "tags": [

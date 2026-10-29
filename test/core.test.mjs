@@ -19,6 +19,8 @@ import {
   renderLorePrompt,
   matchRules,
   VERSION,
+  migrateLegacyStore,
+  storeDir,
 } from '../core.mjs';
 import { checkSource } from '../guard.mjs';
 
@@ -95,7 +97,7 @@ RangeError: Maximum call stack size exceeded
 `;
 
 function tmpHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-'));
   fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
   return home;
 }
@@ -217,7 +219,7 @@ test('fetchArtifacts only reports crash/startup logs', () => {
 });
 
 test('guard: source regex hits with line number, exclude respected', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-src-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-src-'));
   fs.writeFileSync(path.join(dir, 'index.js'), 'export function apply(ctx) {\n  process.exit(1)\n}\n');
   fs.writeFileSync(path.join(dir, 'safe.js'), '// process.exit(1) is discussed here\n');
   const rules = [{
@@ -299,8 +301,8 @@ test('VERSION 与 package.json 一致（发版时不会忘了改常量）', () =
 
 test('scan migrates legacy aggregate rows：count 保留，补出每次发生的时间', () => {
   const home = tmpHome();
-  fs.mkdirSync(path.join(home, 'crash-lore'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'crash-lore', 'incidents.jsonl'), `${JSON.stringify({
+  fs.mkdirSync(path.join(home, 'lifeguard'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'lifeguard', 'incidents.jsonl'), `${JSON.stringify({
     id: 'inc_legacy',
     ts: '2025-10-01T00:00:00.000Z',
     lastTs: '2025-10-05T00:00:00.000Z',
@@ -342,7 +344,7 @@ test('事件数超过身份保留上限后，count 仍然准确（上限只截�
 });
 
 test('importCorpus dedupes by fingerprint across repeated runs', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-import-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-import-'));
   const corpus = path.join(home, 'corpus.jsonl');
   fs.writeFileSync(corpus, [
     JSON.stringify({ fingerprint: 'fp-one', ts: '2026-01-01T00:00:00.000Z', count: 1, signature: 'x' }),
@@ -362,7 +364,7 @@ test('旧条目补出真实事件后，强制重扫不再把累计次数叠成�
   assert.equal(row.count, 1);
   /* Roll the stored row back to the pre-0.2.1 aggregate shape: count kept, per-event ids gone. */
   const { occurrenceIds, occurrenceTimes, occurrenceSynthetic, ...legacy } = row;
-  fs.writeFileSync(path.join(home, 'crash-lore', 'incidents.jsonl'), `${JSON.stringify(legacy)}\n`);
+  fs.writeFileSync(path.join(home, 'lifeguard', 'incidents.jsonl'), `${JSON.stringify(legacy)}\n`);
   const first = scan({ home, dirs, force: true });
   const afterFirst = readIncidents(home)[0];
   assert.equal(afterFirst.count, 1, '一份真实日志只能算一次，不能把迁移补出的次数当新事件再加一');
@@ -416,4 +418,31 @@ test('heap death: reads the GC diary instead of filing it as unknown', () => {
   /* 提交堆 3770.1 MB：括号里的第二个数是被占满的额度，不是前一个采样点 */
   assert.equal(incident.signature, 'out-of-memory · heap 3770 MB');
   assert.equal(incident.frame, 'main.js:3845');
+});
+
+test('升级改名：旧数据目录并进新目录，只搬不删，读写都不断', () => {
+  const home = tmpHome();
+  const legacy = path.join(home, 'crash-lore');
+  fs.mkdirSync(legacy, { recursive: true });
+  fs.writeFileSync(path.join(legacy, 'state.json'), JSON.stringify({ quarantine: [{ name: 'dsh-old' }], scanned: {} }));
+  fs.writeFileSync(path.join(legacy, 'incidents.jsonl'), `${JSON.stringify({ id: 'inc_old', ts: '2025-10-01T00:00:00.000Z', kind: 'crash', signature: 'old crash' })}\n`);
+  fs.writeFileSync(path.join(home, 'lineage.jsonl'), `${JSON.stringify({ parent: 'a', child: 'b' })}\n`);
+  fs.mkdirSync(path.join(home, 'handoff'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'handoff', 'b.md'), '交接单');
+
+  /* 迁移前：读旧位置也要能读到，不然升级当场就断片。 */
+  assert.equal(readIncidents(home).length, 1);
+  migrateLegacyStore(home);
+
+  const dir = storeDir(home);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).quarantine, [{ name: 'dsh-old' }]);
+  assert.equal(readIncidents(home).length, 1);
+  assert.ok(fs.existsSync(path.join(dir, 'lineage.jsonl')), '血缘记录要跟着搬进新目录');
+  assert.ok(fs.existsSync(path.join(dir, 'handoff', 'b.md')), '交接单文件也要搬');
+  assert.ok(fs.existsSync(legacy), '旧目录只搬不删，迁移失败还能回退');
+  assert.ok(fs.existsSync(path.join(home, 'lineage.jsonl')), '旧位置的散文件只复制不删，回退旧版本还能读');
+
+  /* 再跑一次什么都不变：迁移必须幂等。 */
+  migrateLegacyStore(home);
+  assert.equal(readIncidents(home).length, 1);
 });

@@ -1,4 +1,4 @@
-# crash-lore fixture: 只有 dsh-bad 的条目该被注释，其余逐字节保留
+# lifeguard fixture: 只有 dsh-bad 的条目该被注释，其余逐字节保留
 - id: good-plugin
   name: "dsh-good"
   config:

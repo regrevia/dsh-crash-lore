@@ -1,5 +1,5 @@
 /**
- * dsh-crash-lore core: harvest DSH crash artifacts, normalize them into incidents,
+ * dsh-lifeguard core: harvest DSH crash artifacts, normalize them into incidents,
  * keep a compact rule set ("lore"), and render the resident prompt section.
  *
  * Pure Node, zero dependencies, no side effects at import. Used by:
@@ -13,11 +13,70 @@ import crypto from 'node:crypto';
 import { correlateIncidents, crashLoops } from './lib/attribute.mjs';
 import { footprintBefore } from './lib/sessions.mjs';
 
-export const VERSION = '0.5.3';
+export const VERSION = '0.6.0';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
+/* 新数据目录；旧版目录名只用于一次性迁移与读取回退。 */
+export const DATA_DIR = 'lifeguard';
+export const LEGACY_DIR = 'crash-lore';
+
+const migratedHomes = new Set();
+
+function copyTree(from, to) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    const src = path.join(from, entry.name);
+    const dst = path.join(to, entry.name);
+    if (entry.isDirectory()) copyTree(src, dst);
+    else if (!fs.existsSync(dst)) fs.copyFileSync(src, dst);
+  }
+}
+
+/* 旧版把数据写在 $DSH_HOME/crash-lore、$DSH_HOME/lineage.jsonl、$DSH_HOME/handoff/；
+ * 这里一次性复制进新目录。只复制不删除：旧目录原样留着，中途失败或回退旧版本都还能读。
+ * 迁移失败不抛错：插件自己的存储故障不能拖垮宿主。 */
+export function migrateLegacyStore(home = DEFAULT_HOME) {
+  const root = path.resolve(home);
+  if (migratedHomes.has(root)) return;
+  migratedHomes.add(root);
+  const dir = path.join(root, DATA_DIR);
+  const legacyDir = path.join(root, LEGACY_DIR);
+  const legacyLineage = path.join(root, 'lineage.jsonl');
+  const legacyHandoff = path.join(root, 'handoff');
+  const exists = (file) => { try { return fs.existsSync(file); } catch { return false; } };
+  if (!exists(legacyDir) && !exists(legacyLineage) && !exists(legacyHandoff)) return;
+  const copy = (from, to) => {
+    if (!exists(from) || exists(to)) return;
+    try {
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(from, to);
+    } catch {
+      /* 读不到旧数据就当没有；读取端另有回退 */
+    }
+  };
+  try {
+    if (exists(legacyDir)) copyTree(legacyDir, dir);
+    else fs.mkdirSync(dir, { recursive: true });
+    copy(legacyLineage, path.join(dir, 'lineage.jsonl'));
+    if (exists(legacyHandoff)) copyTree(legacyHandoff, path.join(dir, 'handoff'));
+  } catch {
+    /* 迁移失败不抛错；旧目录保持原样可读 */
+  }
+}
+
 export function storeDir(home = DEFAULT_HOME) {
-  return path.join(home, 'crash-lore');
+  return path.join(home, DATA_DIR);
+}
+
+/* 读旧位置：新位置缺文件时退回旧目录读，写路径永远只写新位置。 */
+function storeReadFile(file, home) {
+  try {
+    if (fs.existsSync(file)) return file;
+    const legacy = path.join(path.resolve(home), LEGACY_DIR, path.relative(path.join(path.resolve(home), DATA_DIR), file));
+    return fs.existsSync(legacy) ? legacy : file;
+  } catch {
+    return file;
+  }
 }
 
 export function paths(home = DEFAULT_HOME) {
@@ -501,7 +560,7 @@ export function parseArtifact(file) {
 /* ------------------------------------------------------------------ store */
 
 export function readIncidents(home = DEFAULT_HOME) {
-  return readJsonl(paths(home).incidents);
+  return readJsonl(storeReadFile(paths(home).incidents, home));
 }
 
 export function appendIncident(incident, home = DEFAULT_HOME) {
@@ -517,7 +576,7 @@ export function rewriteIncidents(incidents, home = DEFAULT_HOME) {
 }
 
 export function readRules(home = DEFAULT_HOME) {
-  const doc = readJson(paths(home).rules, null);
+  const doc = readJson(storeReadFile(paths(home).rules, home), null);
   return Array.isArray(doc?.rules) ? doc.rules : [];
 }
 
@@ -526,7 +585,7 @@ export function writeRules(rules, home = DEFAULT_HOME) {
 }
 
 export function readState(home = DEFAULT_HOME) {
-  const state = readJson(paths(home).state, null);
+  const state = readJson(storeReadFile(paths(home).state, home), null);
   return { scanned: {}, quarantine: [], ...(state && typeof state === 'object' ? state : {}) };
 }
 
@@ -733,6 +792,8 @@ export function normalizeOccurrence(incident) {
 
 export function scan(options = {}) {
   const home = options.home ?? DEFAULT_HOME;
+  /* 升级后第一次扫描前把旧版数据目录并进来；只搬不删，失败也只是继续用旧目录读。 */
+  migrateLegacyStore(home);
   const state = readState(home);
   const rules = readRules(home);
   const rawStored = readIncidents(home);
@@ -899,7 +960,7 @@ export function scan(options = {}) {
 
 /* ------------------------------------------------------------------ render */
 
-export const PROMPT_HEADER = '【DSH 崩溃防线】本机真实崩溃日志沉淀的硬约束，写插件/改配置时先遵守：';
+export const PROMPT_HEADER = '【DSH 守护】本机真实崩溃日志沉淀的硬约束，写插件/改配置时先遵守：';
 
 export function renderLorePrompt(rules, options = {}) {
   const maxChars = options.maxChars ?? 1000;
@@ -917,7 +978,7 @@ export function renderLorePrompt(rules, options = {}) {
   if (!lines.length) return '';
   const known = new Set(rules.filter((rule) => (rule.hits ?? 0) > 0).map((rule) => rule.id));
   const fresh = rules.filter((rule) => !known.has(rule.id)).length;
-  const tail = `\n改插件/装插件前先用 crash_lore_check <源码目录> 预检，致命项清零再装${fresh ? '' : ''}；起不来用 crash_lore_heal。`;
+  const tail = `\n改插件/装插件前先用 lifeguard_check <源码目录> 预检，致命项清零再装${fresh ? '' : ''}；起不来用 lifeguard_heal。`;
   return `${PROMPT_HEADER}\n${lines.join('\n')}${tail}`;
 }
 

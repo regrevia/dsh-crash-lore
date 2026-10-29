@@ -16,7 +16,7 @@
  * has been mounted), so a missing key is a *pass* here, not a failure.
  *
  * Usage: node scripts/real-host-activation.mjs [--json]
- *        DSH_REAL_HOST_SPEC=dsh-crash-lore@0.2.1 node scripts/real-host-activation.mjs  # probe the published artifact
+ *        DSH_REAL_HOST_SPEC=dsh-lifeguard@0.2.1 node scripts/real-host-activation.mjs  # probe the published artifact
  * Exit: 0 pass, 1 fail, 2 skipped (no DeepSeek Harness app on this machine).
  */
 import { spawnSync } from 'node:child_process';
@@ -90,16 +90,16 @@ async function main() {
     add('profile created from shipped template', make.status === 0, `exit ${make.status}, ${make.ms} ms`);
 
     /* 2. Install the package into it through the same path a user install uses.
-     *    Default is this checkout; DSH_REAL_HOST_SPEC=dsh-crash-lore@0.2.1 probes the
+     *    Default is this checkout; DSH_REAL_HOST_SPEC=dsh-lifeguard@0.2.1 probes the
      *    artifact that is actually on the registry. */
     const spec = process.env.DSH_REAL_HOST_SPEC ?? `link:${repo}`;
     const install = run(app, ['plugin', '--profile', 'lab', 'add', spec], env);
-    const installed = /dsh-crash-lore/.test(install.out);
+    const installed = /dsh-lifeguard/.test(install.out);
     add(`package installed (${spec})`, install.status === 0 && installed, install.out.trim().split('\n').slice(-2).join(' / '));
 
     /* 3. Composed tree carries the entry, in the layer this package declares. */
     const dump = run(app, ['--profile', 'lab', '--dump-config'], env);
-    const entryLine = dump.out.split('\n').findIndex((line) => /name: ['"]?dsh-crash-lore/.test(line));
+    const entryLine = dump.out.split('\n').findIndex((line) => /name: ['"]?dsh-lifeguard/.test(line));
     add('entry present in composed profile tree', entryLine >= 0, entryLine >= 0 ? `line ${entryLine + 1}` : 'entry missing');
 
     /* 4. Boot the real host. Without a credential it stops after mounting everything. */
@@ -107,13 +107,13 @@ async function main() {
     /* Only the loader's own warning counts. The boot scan prints crash history text,
      * which can itself contain "did not activate" from *other* plugins — and that line
      * appearing at all is proof this plugin ran. */
-    const loaderWarning = /dsh: warning:[^\n]*did not activate/.test(boot.out) || /\ncrash-lore \(dsh-crash-lore\):/.test(boot.out);
-    add('loader activated the entry (no loader warning)', !loaderWarning, loaderWarning ? (boot.out.split('\n').find((l) => /crash-lore/.test(l)) ?? '') : 'no activation warning');
+    const loaderWarning = /dsh: warning:[^\n]*did not activate/.test(boot.out) || /\nlifeguard \(dsh-lifeguard\):/.test(boot.out);
+    add('loader activated the entry (no loader warning)', !loaderWarning, loaderWarning ? (boot.out.split('\n').find((l) => /lifeguard/.test(l)) ?? '') : 'no activation warning');
     const reachedMount = /MISSING_CREDENTIAL|no API key|no credential/i.test(boot.out);
     add('boot reached the credential wall (i.e. the tree mounted)', reachedMount, reachedMount ? 'expected without a model key' : `exit ${boot.status}`);
     /* apply() runs the boot scan, which logs one line when the real lore dir has history;
      * on a clean machine there is nothing to log, so this signal is best-effort. */
-    const applyRan = /\[crash-lore\]/.test(boot.out);
+    const applyRan = /\[lifeguard\]/.test(boot.out);
     add('apply() executed in the real host', applyRan || reachedMount, applyRan ? 'boot scan logged' : 'no lore history to log (accepted)');
 
     const verdict = checks.every((c) => c.ok) ? 'PASS  real host activation' : 'FAIL  real host activation';

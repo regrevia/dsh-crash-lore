@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * One-command acceptance run for dsh-crash-lore.
+ * One-command acceptance run for dsh-lifeguard.
  *
  *   node scripts/verify-0.2.1.mjs            # strict: every known hole is a failure
  *   node scripts/verify-0.2.1.mjs --baseline # record current failures (0.2.0 baseline)
@@ -46,7 +46,7 @@ function step(name, cmd, args, opts = {}) {
   return { ok, out };
 }
 
-console.log(`dsh-crash-lore acceptance · ${started.toISOString()} · node ${process.version}${baseline ? ' · baseline mode' : ''}`);
+console.log(`dsh-lifeguard acceptance · ${started.toISOString()} · node ${process.version}${baseline ? ' · baseline mode' : ''}`);
 const pkg = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'package.json'), 'utf8'));
 console.log(`checkout: ${PLUGIN_ROOT} (v${pkg.version})`);
 console.log('');
@@ -65,17 +65,17 @@ step('extras-evidence', process.execPath, ['test/integration/extras.mjs']);
   let ok = true;
   try {
     const profilePkg = JSON.parse(fs.readFileSync(path.join(profileDir, 'package.json'), 'utf8'));
-    const spec = profilePkg.dependencies?.['dsh-crash-lore'];
+    const spec = profilePkg.dependencies?.['dsh-lifeguard'];
     facts.push(`dep=${spec ?? 'MISSING'}`);
     ok = ok && typeof spec === 'string' && spec.startsWith('link:') && fs.realpathSync(spec.slice('link:'.length)) === fs.realpathSync(PLUGIN_ROOT);
-    const nm = path.join(profileDir, 'node_modules', 'dsh-crash-lore');
+    const nm = path.join(profileDir, 'node_modules', 'dsh-lifeguard');
     const linked = fs.realpathSync(nm);
     facts.push(`node_modules->${linked}`);
     ok = ok && linked === fs.realpathSync(PLUGIN_ROOT);
     // The plugin ships its own bundle patch (dsh.bundle.patch); the profile need not repeat it.
     const bundle = path.join(PLUGIN_ROOT, pkg.dsh?.bundle?.patch ?? 'cordis.patch.yml');
     const patch = fs.readFileSync(bundle, 'utf8');
-    const hasPatch = /^\s*-\s*id:\s*crash-lore\s*$/m.test(patch) && /name:\s*dsh-crash-lore/.test(patch);
+    const hasPatch = /^\s*-\s*id:\s*lifeguard\s*$/m.test(patch) && /name:\s*dsh-lifeguard/.test(patch);
     facts.push(`bundle-patch=${hasPatch ? path.relative(PLUGIN_ROOT, bundle) : 'MISSING'}`);
     ok = ok && hasPatch;
   } catch (error) {

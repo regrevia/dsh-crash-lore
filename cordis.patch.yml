@@ -1,7 +1,7 @@
 # 崩溃防护总开关：guard: false 只留提示词与工具，不接执行链；
 # monitorOnly: true 只记录拦截不真的拒绝（先观察误报用）。
-# 写进 crash-lore 的 config 里，例如：config: { guard: true }
+# 写进 lifeguard 的 config 里，例如：config: { guard: true }
 - insert:
-    - id: crash-lore
-      name: dsh-crash-lore
+    - id: lifeguard
+      name: dsh-lifeguard
       config: {}

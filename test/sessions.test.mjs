@@ -6,7 +6,7 @@ import path from 'node:path';
 import { LOCK_FRESH_MS, PLAIN_RATIO, RESTORE_FACTOR, sessionFootprint, footprintLines } from '../lib/sessions.mjs';
 
 function workspace() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-sessions-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-sessions-'));
   const make = (project, id, packedMB, lockAgeMs) => {
     const dir = path.join(home, 'sessions', project, id);
     fs.mkdirSync(dir, { recursive: true });
@@ -64,7 +64,7 @@ test('estimate crosses the risk line only when enough heap is at stake', () => {
 });
 
 test('missing sessions root is empty, not an error', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-lore-nosessions-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-nosessions-'));
   const footprint = sessionFootprint(home);
   assert.equal(footprint.openCount, 0);
   assert.equal(footprint.totalPackedMB, 0);

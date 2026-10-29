@@ -1,4 +1,4 @@
 - insert:
-    - id: crash-lore-resolve-probe
-      name: dsh-crash-lore-resolve-probe
+    - id: lifeguard-resolve-probe
+      name: dsh-lifeguard-resolve-probe
       config: {}

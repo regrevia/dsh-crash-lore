@@ -1,7 +1,7 @@
 /**
- * dsh-crash-lore → dsh-lite-memory bridge.
+ * dsh-lifeguard → dsh-lite-memory bridge.
  *
- * 把 rules.json 里的「崩溃防线」规则压成记忆条目，写进 dsh-lite-memory 的��。
+ * 把 rules.json 里的「DSH 守护」规则压成记忆条目，写进 dsh-lite-memory 的��。
  * 纯 Node、零依赖、import 无副作用；只有显式调用 exportRules() 才会写盘。
  *
  * 设计要点（和 CONTRACT.md 对齐）：
@@ -31,7 +31,7 @@ import { fileURLToPath, pathToFileURL as nodePathToFileURL } from 'node:url';
 
 export const DEFAULT_TITLE_PREFIX = 'DSH崩溃防线：';
 export const DEFAULT_WHEN = '写或改 DSH 插件、配置时';
-export const DEFAULT_TAGS = ['crash-lore'];
+export const DEFAULT_TAGS = ['lifeguard'];
 export const BODY_MAX = 600;
 const DEFAULT_SCOPE = 'global';
 export const MEMORY_PACKAGE = 'dsh-lite-memory';
@@ -372,7 +372,7 @@ function isOwnEntry(result, opts) {
 /** cli.mjs `export --md` 用：紧凑 Markdown 块，不碰记忆库。 */
 export function exportMarkdown(rules, options = {}) {
   const list = normalizeRules(rules);
-  const title = clip(options.title ?? 'DSH 崩溃防线（本机日志沉淀）', 80);
+  const title = clip(options.title ?? 'DSH 守护（本机日志沉淀）', 80);
   if (!list.length) return `## ${title}\n\n（暂无规则）\n`;
   const lines = [`## ${title}`, ''];
   for (const rule of list) {

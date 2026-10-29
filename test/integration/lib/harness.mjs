@@ -1,5 +1,5 @@
 /**
- * Acceptance harness for dsh-crash-lore defense.
+ * Acceptance harness for dsh-lifeguard defense.
  *
  * Everything here runs in /tmp fixtures: a fake profile that links a fake plugin dir,
  * a fake session cwd, and a fake DSH_HOME. The real profile is only *read* to confirm
@@ -104,7 +104,7 @@ export async function boot({ home, profileDir, config = {} }) {
     registered,
     guards,
     handlers,
-    guardTool: registered.get('crash_lore_guard'),
+    guardTool: registered.get('lifeguard_guard'),
     callGuard: (exec) => (guards[0] ? guards[0](exec) : undefined),
     callPre: (exec, next = async () => ({ kind: 'next' })) => (handlers['tools/pre-execute'] ? handlers['tools/pre-execute'](exec, next) : next()),
     dispose() {
