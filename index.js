@@ -88,6 +88,8 @@ const HANDOFF_TIMEOUT_MS = 180000;
 const HANDOFF_MAX_TOKENS = 8000;
 const HANDOFF_TEXT_MAX = 40000;
 const HANDOFF_LLM_MAX_PCT = 85;
+/* 批量转世做到这个占用率就停：转世自己也要读记录、建会话，堆越满越不值得再叠。 */
+const BATCH_STOP_PCT = 92;
 
 /** 优先用自带的构造器（带 id 和来源），解析不到就用最小结构。 */
 function userMessage(text) {
@@ -260,6 +262,233 @@ function healthPayload(home) {
   } catch {
     return { enabled: true, pct: 0, wallMB: 0, basis: 'none', heapMB: 0, peakMB: 0, limitMB: 0 };
   }
+}
+
+/* 转世一个会话：读记录 → 写交接单 → 建子会话 → 改名 → 发交接单 → 归档原会话 → 记血缘。
+ * 单次转世和批量转世共用这一份；失败返回 { ok:false, text }，由调用方原样上屏。 */
+async function handoffOne(ctx, { home, state, sessions, call, sourceId, current, knownIdle = false, args }) {
+  /* 转世的前提是原会话已经收尾。别人还在跑的时候转世，旧回合会和接手的新会话同时写同一份
+   * 工作，旧回合还会在归档后被腰斩（可能留下悬空 tool_calls）。自己转自己例外：当前这一轮
+   * 就是收尾动作本身。查不到状态不算「在跑」，但要把结果说清楚。 */
+  if (!knownIdle && sourceId !== current && args?.force !== true) {
+    let busy = false;
+    if (typeof sessions.list === 'function') {
+      try {
+        const page = await sessions.list({}, call);
+        const items = Array.isArray(page?.items) ? page.items : [];
+        busy = items.some((item) => item?.sessionId === sourceId && item?.running === true);
+      } catch (error) {
+        recordError(state, error);
+        return { ok: false, text: `查不到会话 ${sourceId} 是否还在跑，没敢动它。确认它已经停下后重试，或传 force: true。什么都没改。` };
+      }
+    }
+    if (busy) {
+      return { ok: false, text: `会话 ${sourceId} 还在跑，不能转世：先让它跑完或手动停掉，再来一次。现在就转的话，旧回合会在归档后被腰斩，新会话也会和它抢同一份工作。确认要强行转世就传 force: true。什么都没改。` };
+    }
+  }
+  let inspection;
+  try {
+    inspection = await sessions.inspect(sourceId, call);
+  } catch (error) {
+    return { ok: false, text: `读不到会话 ${sourceId}：${error?.message ?? error}。什么都没改。` };
+  }
+  const events = inspection?.events;
+  /* 确定性那份先算：模型没答上来、堆太高不敢调、或者用户关掉 llm 时，转世也必须有交接单。 */
+  const fallback = buildBrief({ parentId: sourceId, events });
+  const childTitle = clip(`${fallback.title} · 转世`, 40);
+  const cwd = inspection?.meta?.cwd;
+  let child;
+  try {
+    child = await sessions.create(cwd ? { cwd } : {}, call);
+  } catch (first) {
+    /* 老会话的 cwd 可能已经不在任何工作区里；建不出来就退回默认工作区，别让转世卡在参数上。 */
+    try {
+      child = await sessions.create({}, call);
+    } catch (error) {
+      return { ok: false, text: `新会话没建起来：${error?.message ?? first?.message ?? error}。原会话没动，可以重试。` };
+    }
+  }
+  const childId = child?.sessionId;
+  if (typeof childId !== 'string' || !childId) return { ok: false, text: '没有拿到新会话 id，原会话没动，可以重试。' };
+  /* 交接单由模型读懂原会话后写；调用记在新会话名下（它已经建好），原会话的记录不被改写。
+   * 任何一步失败都退回确定性那份——转世本身不能因为整理失败而失败。 */
+  let brief = fallback;
+  let model = null;
+  let llmNote = '';
+  if (args?.llm !== false) {
+    const llm = serviceOf(ctx, 'llm');
+    const route = requestRoute(events);
+    const pct = healthPayload(home).pct;
+    if (!llm || typeof llm.prepareCall !== 'function') llmNote = '模型服务没接上，用的是自动摘要';
+    else if (!route) llmNote = '原会话没有记录用的模型，用的是自动摘要';
+    else if (pct >= HANDOFF_LLM_MAX_PCT) llmNote = `内存已到 ${pct.toFixed(0)}%，没让模型整理，用的是自动摘要`;
+    else {
+      try {
+        const ancestors = lineageChain(readLineage(home), sourceId).filter((row) => row.child !== sourceId);
+        const result = await generateHandoffBody({
+          llm,
+          route,
+          events,
+          parentId: sourceId,
+          parentTitle: fallback.title,
+          sessionId: childId,
+          ancestors,
+          signal: call,
+        });
+        const body = normalizeHandoffBody(result.text);
+        if (body) {
+          brief = buildLlmBrief({ parentId: sourceId, parentTitle: fallback.title, body, facts: fallback.facts, model: route, ancestors });
+          model = route;
+          if (result.truncated) llmNote = '交接单太长，写到上限就收了';
+        } else {
+          llmNote = '模型返回的是空的，用的是自动摘要';
+        }
+      } catch (error) {
+        recordError(state, error);
+        llmNote = `模型没答上来（${error?.message ?? error}），用的是自动摘要`;
+      }
+    }
+  } else {
+    llmNote = '按你的要求关掉了模型整理，用的是自动摘要';
+  }
+  if (typeof sessions.rename === 'function') {
+    try {
+      await sessions.rename({ sessionId: childId, title: childTitle }, call);
+    } catch (error) {
+      recordError(state, error);
+    }
+  }
+  let delivered = 'message';
+  if (args?.brief !== false && typeof sessions.prompt === 'function') {
+    try {
+      await sessions.prompt({
+        requestId: `handoff-${randomUUID()}`,
+        sessionId: childId,
+        mode: 'queue',
+        content: [{ type: 'text', text: brief.text }],
+      }, call);
+    } catch (error) {
+      /* 发不出去就退回文件：会话已经建好，单子不能丢。 */
+      delivered = 'file';
+      recordError(state, error);
+    }
+  } else {
+    delivered = 'file';
+  }
+  let briefPath = '';
+  if (delivered === 'file') {
+    try {
+      briefPath = path.join(home, 'handoff', `${childId}.md`);
+      fs.mkdirSync(path.dirname(briefPath), { recursive: true });
+      fs.writeFileSync(briefPath, brief.text);
+    } catch (error) {
+      recordError(state, error);
+    }
+  }
+  let archived = false;
+  const workspaces = serviceOf(ctx, 'workspaceController');
+  if (workspaces && typeof workspaces.archiveSession === 'function') {
+    try {
+      await workspaces.archiveSession({ sessionId: sourceId }, call);
+      archived = true;
+    } catch (error) {
+      recordError(state, error);
+    }
+  }
+  let generation = 1;
+  try {
+    generation = generationOf(readLineage(home), sourceId);
+    appendLineage(home, {
+      child: childId,
+      parent: sourceId,
+      parentTitle: brief.title,
+      title: childTitle,
+      generation,
+      at: new Date().toISOString(),
+      briefChars: brief.text.length,
+    });
+  } catch (error) {
+    recordError(state, error);
+  }
+  const lines = [
+    `转世完成：新会话 ${childId}（第 ${generation} 代）`,
+    `标题：${childTitle}`,
+    delivered === 'message' ? '交接单已经发到新会话里，它会先回一句「收到」等你下一步。' : `交接单写在 ${briefPath || '（写盘失败，内容在本次工具结果里）'}，下次打开新会话时按它接着干。`,
+    model ? `交接单由 ${model.provider}/${model.model} 整理，${brief.text.length} 字。` : `交接单是自动摘要，${brief.text.length} 字：${llmNote || '没开模型整理'}。`,
+    archived ? `原会话 ${sourceId} 已归档，需要细节时取消归档回看，不会删。` : `原会话 ${sourceId} 没有归档成功（工作区服务没接上），但记录都还在。`,
+    '内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开它再发一句「继续」。',
+    '血缘记在插件自己的记录里，改标题不会丢；要看链条用 crash_lore_lineage。',
+  ];
+  if (delivered === 'file' && brief.text.length) {
+    lines.push('');
+    lines.push(brief.text);
+  }
+  return {
+    ok: true,
+    text: lines.join('\n'),
+    childId,
+    parentId: sourceId,
+    generation,
+    delivered,
+    archived,
+    briefPath,
+    llm: model ? `${model.provider}/${model.model}` : '',
+  };
+}
+
+/* 批量转世：先把可转的会话列出来（默认只看不动），确认后再一个个做。
+ * 只挑已经停下、还没归档、又不是当前会话的那些；跑着的会话转世会被腰斩，一律跳过。 */
+async function handoffMany(ctx, { home, state, sessions, call, current, args }) {
+  const limit = Math.min(Math.max(Math.trunc(Number(args?.limit)) || 5, 1), 10);
+  let items;
+  try {
+    const page = await sessions.list({}, call);
+    items = Array.isArray(page?.items) ? page.items : [];
+  } catch (error) {
+    return `读不到会话清单：${error?.message ?? error}。什么都没改。`;
+  }
+  const rows = items.filter((item) => item
+    && typeof item.sessionId === 'string' && item.sessionId
+    && item.sessionId !== current
+    && item.running !== true
+    && item.archived !== true);
+  if (!rows.length) return '没有可转世的会话：除了当前这个，其余都在跑或已经归档。';
+  const picked = rows.slice(0, limit);
+  const listed = picked.map((item) => `- ${item.sessionId}${item.title ? `（${clip(String(item.title), 30)}）` : ''}`);
+  if (args?.dryRun !== false) {
+    return [
+      `可以转世 ${rows.length} 个会话，这次先只列不动，挑前 ${picked.length} 个：`,
+      ...listed,
+      '确认要转世就再调一次，带 all: true、dryRun: false。',
+      '批量默认用自动摘要，省 token 也省堆；想让模型读懂再写交接单，就单独给那个会话传 sessionId。',
+      '内存只有重启才拿得回来：转世不会当场把堆降下来。',
+    ].join('\n');
+  }
+  const done = [];
+  const failed = [];
+  for (const item of picked) {
+    const pct = healthPayload(home).pct;
+    if (pct >= BATCH_STOP_PCT) {
+      failed.push(`剩下的没做：内存已到 ${pct.toFixed(0)}%，再转世只会更冒险。`);
+      break;
+    }
+    const one = await handoffOne(ctx, {
+      home,
+      state,
+      sessions,
+      call,
+      sourceId: item.sessionId,
+      current,
+      knownIdle: true,
+      args: { ...args, llm: args?.llm === true, title: undefined },
+    });
+    if (one.ok) done.push(`- ${one.childId} ← ${item.sessionId}（第 ${one.generation} 代）${one.archived ? '' : '，原会话没归档'}`);
+    else failed.push(`- ${item.sessionId}：${one.text}`);
+  }
+  const summary = [`批量转世：做成 ${done.length} 个${failed.length ? `，没做 ${failed.length} 个` : ''}。`, ...done];
+  if (failed.length) { summary.push('没做的：'); summary.push(...failed); }
+  summary.push('内存只有重启才拿得回来：重启前新会话可能各有一个未完成回合，重启后逐个打开发一句「继续」。');
+  return summary.join('\n');
 }
 
 export function apply(ctx, config = {}) {
@@ -817,6 +1046,9 @@ export function apply(ctx, config = {}) {
         brief: { type: 'boolean', description: '把交接单发给新会话，默认发；关掉只建空会话并把单子写盘' },
         force: { type: 'boolean', description: '会话还在跑也强行转世，默认拒绝' },
         llm: { type: 'boolean', description: '默认让模型读懂原会话再写交接单；关掉只做自动摘要，省资源但会丢判断' },
+        all: { type: 'boolean', description: '批量：把已经停下的会话一次转世，默认先只列清单不动' },
+        dryRun: { type: 'boolean', description: '配合 all：默认 true 只列清单，false 才真做' },
+        limit: { type: 'number', description: '配合 all：一次最多做几个，默认 5，上限 10' },
       },
       additionalProperties: false,
     },
@@ -829,166 +1061,15 @@ export function apply(ctx, config = {}) {
       /* 第二个参数是中断信号，不能传空对象。 */
       const call = signal instanceof AbortSignal ? signal : new AbortController().signal;
       const current = propOf(propOf(propOf(exec, 'agent'), 'session'), 'id');
+      const me = typeof current === 'string' ? current : '';
+      /* 批量也回 { text }：工具返回值统一，调用方只认 text 那一栏。 */
+      if (args?.all === true) return { text: await handoffMany(ctx, { home, state, sessions, call, current: me, args }) };
       const asked = typeof args?.sessionId === 'string' ? args.sessionId.trim() : '';
-      const sourceId = asked || (typeof current === 'string' ? current : '');
+      const sourceId = asked || me;
       if (!sourceId) return '不知道要转世哪个会话：请传 sessionId。什么都没改。';
-      /* 转世的前提是原会话已经收尾。别人还在跑的时候转世，旧回合会和接手的新会话同时写同一份
-       * 工作，旧回合还会在归档后被腰斩（可能留下悬空 tool_calls）。自己转自己例外：当前这一轮
-       * 就是收尾动作本身。查不到状态不算「在跑」，但要把结果说清楚。 */
-      if (sourceId !== current && args?.force !== true) {
-        let busy = false;
-        if (typeof sessions.list === 'function') {
-          try {
-            const page = await sessions.list({}, call);
-            const items = Array.isArray(page?.items) ? page.items : [];
-            busy = items.some((item) => item?.sessionId === sourceId && item?.running === true);
-          } catch (error) {
-            recordError(state, error);
-            return `查不到会话 ${sourceId} 是否还在跑，没敢动它。确认它已经停下后重试，或传 force: true。什么都没改。`;
-          }
-        }
-        if (busy) {
-          return `会话 ${sourceId} 还在跑，不能转世：先让它跑完或手动停掉，再来一次。现在就转的话，旧回合会在归档后被腰斩，新会话也会和它抢同一份工作。确认要强行转世就传 force: true。什么都没改。`;
-        }
-      }
-      let inspection;
-      try {
-        inspection = await sessions.inspect(sourceId, call);
-      } catch (error) {
-        return `读不到会话 ${sourceId}：${error?.message ?? error}。什么都没改。`;
-      }
-      const events = inspection?.events;
-      /* 确定性那份先算：模型没答上来、堆太高不敢调、或者用户关掉 llm 时，转世也必须有交接单。 */
-      const fallback = buildBrief({ parentId: sourceId, events });
-      const childTitle = clip(`${fallback.title} · 转世`, 40);
-      const cwd = inspection?.meta?.cwd;
-      let child;
-      try {
-        child = await sessions.create(cwd ? { cwd } : {}, call);
-      } catch (first) {
-        /* 老会话的 cwd 可能已经不在任何工作区里；建不出来就退回默认工作区，别让转世卡在参数上。 */
-        try {
-          child = await sessions.create({}, call);
-        } catch (error) {
-          return `新会话没建起来：${error?.message ?? first?.message ?? error}。原会话没动，可以重试。`;
-        }
-      }
-      const childId = child?.sessionId;
-      if (typeof childId !== 'string' || !childId) return '没有拿到新会话 id，原会话没动，可以重试。';
-      /* 交接单由模型读懂原会话后写；调用记在新会话名下（它已经建好），原会话的记录不被改写。
-       * 任何一步失败都退回确定性那份——转世本身不能因为整理失败而失败。 */
-      let brief = fallback;
-      let model = null;
-      let llmNote = '';
-      if (args?.llm !== false) {
-        const llm = serviceOf(ctx, 'llm');
-        const route = requestRoute(events);
-        const pct = healthPayload(home).pct;
-        if (!llm || typeof llm.prepareCall !== 'function') llmNote = '模型服务没接上，用的是自动摘要';
-        else if (!route) llmNote = '原会话没有记录用的模型，用的是自动摘要';
-        else if (pct >= HANDOFF_LLM_MAX_PCT) llmNote = `内存已到 ${pct.toFixed(0)}%，没让模型整理，用的是自动摘要`;
-        else {
-          try {
-            const ancestors = lineageChain(readLineage(home), sourceId).filter((row) => row.child !== sourceId);
-            const result = await generateHandoffBody({
-              llm,
-              route,
-              events,
-              parentId: sourceId,
-              parentTitle: fallback.title,
-              sessionId: childId,
-              ancestors,
-              signal: call,
-            });
-            const body = normalizeHandoffBody(result.text);
-            if (body) {
-              brief = buildLlmBrief({ parentId: sourceId, parentTitle: fallback.title, body, facts: fallback.facts, model: route, ancestors });
-              model = route;
-              if (result.truncated) llmNote = '交接单太长，写到上限就收了';
-            } else {
-              llmNote = '模型返回的是空的，用的是自动摘要';
-            }
-          } catch (error) {
-            recordError(state, error);
-            llmNote = `模型没答上来（${error?.message ?? error}），用的是自动摘要`;
-          }
-        }
-      } else {
-        llmNote = '按你的要求关掉了模型整理，用的是自动摘要';
-      }
-      if (typeof sessions.rename === 'function') {
-        try {
-          await sessions.rename({ sessionId: childId, title: childTitle }, call);
-        } catch (error) {
-          recordError(state, error);
-        }
-      }
-      let delivered = 'message';
-      if (args?.brief !== false && typeof sessions.prompt === 'function') {
-        try {
-          await sessions.prompt({
-            requestId: `handoff-${randomUUID()}`,
-            sessionId: childId,
-            mode: 'queue',
-            content: [{ type: 'text', text: brief.text }],
-          }, call);
-        } catch (error) {
-          /* 发不出去就退回文件：会话已经建好，单子不能丢。 */
-          delivered = 'file';
-          recordError(state, error);
-        }
-      } else {
-        delivered = 'file';
-      }
-      let briefPath = '';
-      if (delivered === 'file') {
-        try {
-          briefPath = path.join(home, 'handoff', `${childId}.md`);
-          fs.mkdirSync(path.dirname(briefPath), { recursive: true });
-          fs.writeFileSync(briefPath, brief.text);
-        } catch (error) {
-          recordError(state, error);
-        }
-      }
-      let archived = false;
-      const workspaces = serviceOf(ctx, 'workspaceController');
-      if (workspaces && typeof workspaces.archiveSession === 'function') {
-        try {
-          await workspaces.archiveSession({ sessionId: sourceId }, call);
-          archived = true;
-        } catch (error) {
-          recordError(state, error);
-        }
-      }
-      let generation = 1;
-      try {
-        generation = generationOf(readLineage(home), sourceId);
-        appendLineage(home, {
-          child: childId,
-          parent: sourceId,
-          parentTitle: brief.title,
-          title: childTitle,
-          generation,
-          at: new Date().toISOString(),
-          briefChars: brief.text.length,
-        });
-      } catch (error) {
-        recordError(state, error);
-      }
-      const lines = [
-        `转世完成：新会话 ${childId}（第 ${generation} 代）`,
-        `标题：${childTitle}`,
-        delivered === 'message' ? '交接单已经发到新会话里，它会先回一句「收到」等你下一步。' : `交接单写在 ${briefPath || '（写盘失败，内容在本次工具结果里）'}，下次打开新会话时按它接着干。`,
-        model ? `交接单由 ${model.provider}/${model.model} 整理，${brief.text.length} 字。` : `交接单是自动摘要，${brief.text.length} 字：${llmNote || '没开模型整理'}。`,
-        archived ? `原会话 ${sourceId} 已归档，需要细节时取消归档回看，不会删。` : `原会话 ${sourceId} 没有归档成功（工作区服务没接上），但记录都还在。`,
-        '内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开它再发一句「继续」。',
-        '血缘记在插件自己的记录里，改标题不会丢；要看链条用 crash_lore_lineage。',
-      ];
-      if (delivered === 'file' && brief.text.length) {
-        lines.push('');
-        lines.push(brief.text);
-      }
-      return { text: lines.join('\n'), childId, parentId: sourceId, generation, delivered, archived, briefPath, llm: model ? `${model.provider}/${model.model}` : '' };
+      const one = await handoffOne(ctx, { home, state, sessions, call, sourceId, current: me, args });
+      if (!one.ok) return one.text;
+      return { text: one.text, childId: one.childId, parentId: one.parentId, generation: one.generation, delivered: one.delivered, archived: one.archived, briefPath: one.briefPath, llm: one.llm };
     },
   })), 'crash-lore: crash_lore_handoff');
 

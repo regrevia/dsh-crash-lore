@@ -219,3 +219,131 @@ test('会话还在跑就拒绝，什么都不改', async () => {
   assert.equal(host.calls.archive.length, 0);
   ctx.dispose();
 });
+
+/** 批量转世用的假宿主：会话清单自己给，子会话 id 递增。 */
+function batchHost(items) {
+  const host = fakeHost();
+  const calls = host.calls;
+  let seq = 0;
+  host.services.sessionController.list = async () => ({ items });
+  host.services.sessionController.create = async (seed) => {
+    calls.create.push(seed);
+    seq += 1;
+    return { sessionId: `child-${seq}` };
+  };
+  return host;
+}
+
+async function runBatch({ items, args = {} }) {
+  const home = tmp();
+  const host = batchHost(items);
+  const ctx = makeContext(host.services);
+  apply(ctx, { home });
+  const tool = handoffTool(ctx);
+  const result = await tool.execute({ all: true, ...args }, { signal: new AbortController().signal });
+  ctx.dispose();
+  return { result, text: result.text, calls: host.calls, home };
+}
+
+test('批量默认只列清单：一个会话都不动', async () => {
+  const items = [
+    { sessionId: 's-1', title: '会话一', running: false },
+    { sessionId: 's-2', title: '会话二', running: false },
+    { sessionId: 'busy', title: '还在跑', running: true },
+  ];
+  const { result, calls } = await runBatch({ items });
+  assert.match(result.text, /可以转世 2 个会话/);
+  assert.match(result.text, /s-1/);
+  assert.match(result.text, /s-2/);
+  assert.doesNotMatch(result.text, /busy/);
+  assert.equal(calls.create.length, 0);
+  assert.equal(calls.archive.length, 0);
+});
+
+test('确认后按上限一个个转世，跑着的和当前会话都跳过', async () => {
+  const items = [
+    { sessionId: 's-1', title: '会话一', running: false },
+    { sessionId: 's-2', title: '会话二', running: false },
+    { sessionId: 's-3', title: '会话三', running: false },
+    { sessionId: 'busy', title: '还在跑', running: true },
+  ];
+  const { result, calls } = await runBatch({ items, args: { dryRun: false, limit: 2 } });
+  assert.equal(calls.create.length, 2);
+  assert.equal(calls.archive.length, 2);
+  assert.match(result.text, /做成 2 个/);
+  assert.match(result.text, /child-1 ← s-1/);
+  assert.match(result.text, /child-2 ← s-2/);
+  assert.doesNotMatch(result.text, /s-3/);
+});
+
+test('批量默认不调模型整理，省 token 也省堆', async () => {
+  const items = [{ sessionId: 's-1', title: '会话一', running: false }];
+  const home = tmp();
+  const host = batchHost(items);
+  host.services.llm = {
+    async prepareCall() {
+      throw new Error('批量不该调模型');
+    },
+  };
+  const ctx = makeContext(host.services);
+  apply(ctx, { home });
+  const result = await handoffTool(ctx).execute({ all: true, dryRun: false }, { signal: new AbortController().signal });
+  assert.match(result.text, /做成 1 个/);
+  assert.equal(host.calls.prepare.length, 0);
+  ctx.dispose();
+});
+
+test('一个会话转世失败不影响后面的', async () => {
+  const items = [
+    { sessionId: 's-1', title: '会话一', running: false },
+    { sessionId: 's-2', title: '会话二', running: false },
+  ];
+  const home = tmp();
+  const host = batchHost(items);
+  const realInspect = host.services.sessionController.inspect;
+  host.services.sessionController.inspect = async (sessionId) => {
+    if (sessionId === 's-1') throw new Error('记录读不出来');
+    return realInspect(sessionId);
+  };
+  const ctx = makeContext(host.services);
+  apply(ctx, { home });
+  const result = await handoffTool(ctx).execute({ all: true, dryRun: false }, { signal: new AbortController().signal });
+  assert.match(result.text, /做成 1 个，没做 1 个/);
+  assert.match(result.text, /s-1：/);
+  assert.match(result.text, /s-2/);
+  ctx.dispose();
+});
+
+test('新会话建不起来时，失败话说清楚，不会漏出 undefined', async () => {
+  const home = tmp();
+  const host = fakeHost();
+  host.services.sessionController.create = async () => {
+    throw new Error('工作区写不进去');
+  };
+  const ctx = makeContext(host.services);
+  apply(ctx, { home });
+  const result = await handoffTool(ctx).execute({ sessionId: 'parent-1' }, { signal: new AbortController().signal });
+  assert.match(result.text, /新会话没建起来/);
+  assert.match(result.text, /工作区写不进去/);
+  assert.match(result.text, /原会话没动/);
+  assert.doesNotMatch(result.text, /undefined/);
+  ctx.dispose();
+});
+
+test('批量里一个都建不起来时，每个都说清原因，不出现 undefined', async () => {
+  const items = [
+    { sessionId: 's-1', title: '会话一', running: false },
+    { sessionId: 's-2', title: '会话二', running: false },
+  ];
+  const home = tmp();
+  const host = batchHost(items);
+  host.services.sessionController.create = async () => {
+    throw new Error('工作区写不进去');
+  };
+  const ctx = makeContext(host.services);
+  apply(ctx, { home });
+  const result = await handoffTool(ctx).execute({ all: true, dryRun: false }, { signal: new AbortController().signal });
+  assert.match(result.text, /做成 0 个，没做 2 个/);
+  assert.doesNotMatch(result.text, /undefined/);
+  ctx.dispose();
+});

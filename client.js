@@ -38,7 +38,8 @@ window.__ModuleLoader__.load({
       const arc = h('circle', { key: 'arc', cx: SIZE / 2, cy: SIZE / 2, r: RADIUS, fill: 'none', stroke: color, strokeWidth: STROKE, strokeLinecap: 'round', strokeDasharray: CIRCUMFERENCE, strokeDashoffset: CIRCUMFERENCE * (1 - pct / 100), transform: `rotate(-90 ${SIZE / 2} ${SIZE / 2})` });
       const track = h('circle', { key: 'track', cx: SIZE / 2, cy: SIZE / 2, r: RADIUS, fill: 'none', stroke: 'currentColor', strokeWidth: STROKE, opacity: 0.22 });
       const parts = [track, arc];
-      if (danger) parts.push(h('text', { key: 'mark', x: SIZE / 2, y: SIZE / 2, textAnchor: 'middle', dominantBaseline: 'central', fontSize: 12, fontWeight: 700, fill: color }, '!'));
+      /* 字号 9、抬半像素：感叹号才不压到圈线。 */
+      if (danger) parts.push(h('text', { key: 'mark', x: SIZE / 2, y: SIZE / 2 - 0.5, textAnchor: 'middle', dominantBaseline: 'central', fontSize: 9, fontWeight: 800, fill: color }, '!'));
       return h('svg', { width: SIZE, height: SIZE, viewBox: `0 0 ${SIZE} ${SIZE}`, 'aria-hidden': true, style: { display: 'block', flex: 'none' } }, parts);
     }
 
