@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   parseArtifact,
   redact,
@@ -472,5 +473,6 @@ test('随包规则不按 URL.pathname 找：Windows 上也能从默认路径导�
   const result = seedRules(home);
   assert.ok(result.seeded > 0, `期望从 ${result.file} 导入规则，实际 ${result.seeded} 条`);
   assert.ok(readRules(home).length > 0);
-  assert.equal(path.resolve(result.file), path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'rules.seed.json'));
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  assert.equal(path.resolve(result.file), path.resolve(here, '..', 'rules.seed.json'));
 });
