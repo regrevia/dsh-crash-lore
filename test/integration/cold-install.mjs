@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { PLUGIN_ROOT } from './lib/harness.mjs';
+import { PLUGIN_ROOT, runNpm } from './lib/harness.mjs';
 
 const results = [];
 function record(id, ok, expected, actual) {
@@ -44,7 +44,7 @@ fs.mkdirSync(profile, { recursive: true });
 fs.mkdirSync(home, { recursive: true });
 
 /* 1) npm pack: exactly what the registry would receive. */
-const pack = run('npm', ['pack', '--json', '--pack-destination', root], { cwd: PLUGIN_ROOT });
+const pack = runNpm(['pack', '--json', '--pack-destination', root], { cwd: PLUGIN_ROOT });
 record('p1-npm-pack', pack.status === 0, 'npm pack exits 0', pack.status === 0 ? 'ok' : String(pack.stderr).slice(0, 400));
 if (pack.status !== 0) {
   console.log(`package build failed; artefacts kept at ${root}`);
@@ -68,7 +68,7 @@ record('p7-no-tests-dev', !listing.some((row) => /^package\/(test|tests|docs|scr
 
 /* 2) cold install into a throw-away profile, the way the host would. */
 fs.writeFileSync(path.join(profile, 'package.json'), `${JSON.stringify({ name: 'cl-cold-profile', private: true, type: 'module', dependencies: { 'dsh-lifeguard': `file:${tgz}` } }, null, 2)}\n`);
-const install = run('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', profile], { cwd: profile });
+const install = runNpm(['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', profile], { cwd: profile });
 record('p8-npm-install', install.status === 0, 'npm install from tarball exits 0', install.status === 0 ? 'ok' : String(install.stderr).slice(0, 600));
 // Registry installs are declared as a version range, not as file:<tarball>; use the same shape the
 // host sees so live-surface resolution is exercised the way it is in production.

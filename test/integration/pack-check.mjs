@@ -12,6 +12,7 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { runNpm } from './lib/harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..');
@@ -31,12 +32,9 @@ function fail(message) {
   process.exit(1);
 }
 
-/* Windows 上 npm 是 npm.cmd，不带 shell 直接 spawn 会 ENOENT；只在那边走 shell。 */
-const WIN = process.platform === 'win32';
-const pack = spawnSync(WIN ? 'npm.cmd' : 'npm', ['pack', '--dry-run', '--json'], {
+const pack = runNpm(['pack', '--dry-run', '--json'], {
   cwd: PLUGIN_ROOT,
   encoding: 'utf8',
-  shell: WIN,
   timeout: PACK_TIMEOUT_MS,
   // Keep npm from rewriting user/global config into the result.
   env: { ...process.env, npm_config_update_notifier: 'false' },

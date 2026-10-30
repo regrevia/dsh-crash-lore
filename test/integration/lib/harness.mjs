@@ -13,10 +13,31 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
 export const INDEX_URL = pathToFileURL(path.join(PLUGIN_ROOT, 'index.js')).href;
+
+/* Windows 上 npm 只有 npm.cmd，裸 spawn 会 ENOENT；走 shell 又会改掉参数里的引号。
+ * 先用与当前 node 同装的 npm-cli.js，找不到才退回 shell。 */
+export function npmCli() {
+  const beside = path.dirname(process.execPath);
+  const candidates = [
+    process.env.npm_execpath,
+    path.join(beside, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(beside, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ];
+  return candidates.find((file) => file && file.endsWith('.js') && fs.existsSync(file)) || null;
+}
+
+export function runNpm(args, opts = {}) {
+  const cli = npmCli();
+  const timeout = opts.timeout ?? 180000;
+  if (cli) return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout, ...opts });
+  const win = process.platform === 'win32';
+  return spawnSync(win ? 'npm.cmd' : 'npm', args, { encoding: 'utf8', timeout, shell: win, ...opts });
+}
 
 export function mkroot(prefix = 'cl-accept-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
