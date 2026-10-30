@@ -25,8 +25,9 @@ import {
   storeDir,
   migrateLegacyStore,
 } from './core.mjs';
-import { guardWrite, guardShell, preExecute, liveSurfaces } from './defense.mjs';
+import { guardWrite, guardShell, preExecute, liveSurfaces, denial } from './defense.mjs';
 import { heapLine, heapPressure, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
+import { admit, readLive, wallFor } from './pressure.mjs';
 import { footprintLines, oomEvidenceLines, sessionFootprint } from './lib/sessions.mjs';
 import { crashLoops, loopLines } from './lib/attribute.mjs';
 import {
@@ -255,6 +256,16 @@ function crashWallMB(home) {
   return wall;
 }
 
+/* Is there room to read a large session at all? 90% of the wall is the point where the read
+ * itself can be the allocation that kills the host. */
+const HANDOFF_STOP_RATIO = 0.9;
+function handoffRoom(home) {
+  const live = readLive();
+  const { wallMB, basis } = wallFor({ limitMB: live.limitMB, crashMB: crashWallMB(home) });
+  const ratio = wallMB > 0 ? live.heapMB / wallMB : 0;
+  return { ok: ratio < HANDOFF_STOP_RATIO, ratio, wallMB, basis, live };
+}
+
 /* One allocation-free reading for the composer badge. The figure stays out of prompts. */
 function healthPayload(home) {
   try {
@@ -290,6 +301,19 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
       return { ok: false, text: `会话 ${sourceId} 还在跑，不能转世：先让它跑完或手动停掉，再来一次。现在就转的话，旧回合会在归档后被腰斩，新会话也会和它抢同一份工作。确认要强行转世就传 force: true。什么都没改。` };
     }
   }
+  /* 先量内存再读记录：读一份大会话是转世最贵的动作，等读到一半才发现放不下去就晚了。
+   * 这里只挡「已经在墙边」的情况，正常水位不打扰转世。 */
+  const room = handoffRoom(home);
+  if (!room.ok) {
+    return {
+      ok: false,
+      text: [
+        `内存不够，先别转世：堆 ${room.live.heapMB} MB，墙 ${room.wallMB} MB（${room.basis === 'crash' ? '崩溃点校准' : '按上限留余量'}）。`,
+        '转世本身要读旧会话的记录，这时候读会把宿主推过去。什么都没改。',
+        '改法：现在就把要交接的进展写进工作区文件，然后 ⌘Q 退出 DSH 重开；重开后一次只恢复一个会话。',
+      ].join('\n'),
+    };
+  }
   let inspection;
   try {
     inspection = await sessions.inspect(sourceId, call);
@@ -300,6 +324,32 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
   /* 确定性那份先算：模型没答上来、堆太高不敢调、或者用户关掉 llm 时，转世也必须有交接单。 */
   const fallback = buildBrief({ parentId: sourceId, events });
   const childTitle = clip(`${fallback.title} · 转世`, 40);
+  /* 演练：现在的水位还宽裕，就先把交接单写到磁盘；真到要退出的那一刻不用再读一遍记录。
+   * 不建子会话、不动原会话，可以反复跑，每次都覆盖同一份 preview。 */
+  if (args?.dryRun === true) {
+    let previewPath = '';
+    let saved = false;
+    try {
+      previewPath = path.join(storeDir(home), 'handoff', `preview-${sourceId}.md`);
+      fs.mkdirSync(path.dirname(previewPath), { recursive: true });
+      fs.writeFileSync(previewPath, fallback.text, { mode: 0o600 });
+      saved = fs.readFileSync(previewPath, 'utf8').length === fallback.text.length;
+    } catch (error) {
+      recordError(state, error);
+    }
+    const facts = fallback.facts ?? {};
+    return {
+      ok: saved,
+      text: [
+        saved ? `演练完成：交接单已写到 ${previewPath}（${fallback.text.length} 字）。` : `演练没写成功（${previewPath || '写文件失败'}）。`,
+        `里面收了 ${(facts.messages ?? 0)} 条消息、${(facts.tools ?? 0)} 次工具调用。`,
+        '没有建新会话，也没有动原会话。要真转世就去掉 dryRun 再跑一次；只想退出重开，也可以留着这份单子手动接着干。',
+      ].join('\n'),
+      dryRun: true,
+      briefPath: previewPath,
+      briefChars: fallback.text.length,
+    };
+  }
   const cwd = inspection?.meta?.cwd;
   let child;
   try {
@@ -362,8 +412,21 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
       recordError(state, error);
     }
   }
-  let delivered = 'message';
-  if (args?.brief !== false && typeof sessions.prompt === 'function') {
+  /* 交接单先落盘、回读确认，再谈通知子会话：重启流程的前提是单子确实在硬盘上，不是「发过一次
+   * 请求」。发消息成功但磁盘上没有，这次转世在重启后就等于没交接。 */
+  let briefPath = '';
+  let briefSaved = false;
+  try {
+    briefPath = path.join(storeDir(home), 'handoff', `${childId}.md`);
+    fs.mkdirSync(path.dirname(briefPath), { recursive: true });
+    fs.writeFileSync(briefPath, brief.text, { mode: 0o600 });
+    const back = fs.readFileSync(briefPath, 'utf8');
+    briefSaved = back.length > 0 && back.length === brief.text.length;
+  } catch (error) {
+    recordError(state, error);
+  }
+  let delivered = briefSaved ? 'message' : 'none';
+  if (briefSaved && args?.brief !== false && typeof sessions.prompt === 'function') {
     try {
       await sessions.prompt({
         requestId: `handoff-${randomUUID()}`,
@@ -372,22 +435,12 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
         content: [{ type: 'text', text: brief.text }],
       }, call);
     } catch (error) {
-      /* 发不出去就退回文件：会话已经建好，单子不能丢。 */
+      /* 发不出去不影响落盘：单子已经在磁盘上，重开时照样能接着干。 */
       delivered = 'file';
       recordError(state, error);
     }
-  } else {
+  } else if (briefSaved) {
     delivered = 'file';
-  }
-  let briefPath = '';
-  if (delivered === 'file') {
-    try {
-      briefPath = path.join(storeDir(home), 'handoff', `${childId}.md`);
-      fs.mkdirSync(path.dirname(briefPath), { recursive: true });
-      fs.writeFileSync(briefPath, brief.text);
-    } catch (error) {
-      recordError(state, error);
-    }
   }
   let archived = false;
   const workspaces = serviceOf(ctx, 'workspaceController');
@@ -417,19 +470,20 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
   const lines = [
     `转世完成：新会话 ${childId}（第 ${generation} 代）`,
     `标题：${childTitle}`,
-    delivered === 'message' ? '交接单已经发到新会话里，它会先回一句「收到」等你下一步。' : `交接单写在 ${briefPath || '（写盘失败，内容在本次工具结果里）'}，下次打开新会话时按它接着干。`,
+    !briefSaved ? `交接单没落盘（${briefPath || '写文件失败'}）：这次交接在重启后不算数，先解决磁盘问题再退出。` : '',
+    briefSaved && delivered === 'message' ? '交接单已经发到新会话里，它会先回一句「收到」等你下一步。' : briefSaved ? `交接单已经写入 ${briefPath}，下次打开新会话时按它接着干。` : '',
     model ? `交接单由 ${model.provider}/${model.model} 整理，${brief.text.length} 字。` : `交接单是自动摘要，${brief.text.length} 字：${llmNote || '没开模型整理'}。`,
     archived ? `原会话 ${sourceId} 已归档，需要细节时取消归档回看，不会删。` : `原会话 ${sourceId} 没有归档成功（工作区服务没接上），但记录都还在。`,
     '内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开它再发一句「继续」。',
     '血缘记在插件自己的记录里，改标题不会丢；要看链条用 lifeguard_lineage。',
   ];
-  if (delivered === 'file' && brief.text.length) {
+  if (!briefSaved && brief.text.length) {
     lines.push('');
     lines.push(brief.text);
   }
   return {
-    ok: true,
-    text: lines.join('\n'),
+    ok: briefSaved,
+    text: lines.filter(Boolean).join('\n'),
     childId,
     parentId: sourceId,
     generation,
@@ -929,6 +983,15 @@ export function apply(ctx, config = {}) {
               },
             });
             if (decision && mode !== 'observe') return decision;
+            /* A rule wasn't broken — there is simply no room left. The sampler reports this, the
+             * gate is what stops the next expensive step from crossing the wall. */
+            if (config.heapGate !== false) {
+              const verdict = admit(readLive(), exec, { crashMB: crashWallMB(home) });
+              if (!verdict.ok) {
+                record({ rule: verdict.rule, title: verdict.title }, 'pre-execute', '', verdict.reason, mode === 'observe' ? 'observe' : 'deny', exec?.callId);
+                if (mode !== 'observe') return denial(verdict.reason, { ruleId: verdict.rule, title: verdict.title });
+              }
+            }
             if (!decision && exec?.name === 'plugin_manager') recordCheck(state, { target: targetLabel(null, exec?.arguments?.target) });
           } catch (error) {
             recordError(state, error);
@@ -1053,7 +1116,7 @@ export function apply(ctx, config = {}) {
         force: { type: 'boolean', description: '会话还在跑也强行转世，默认拒绝' },
         llm: { type: 'boolean', description: '默认让模型读懂原会话再写交接单；关掉只做自动摘要，省资源但会丢判断' },
         all: { type: 'boolean', description: '批量：把已经停下的会话一次转世，默认先只列清单不动' },
-        dryRun: { type: 'boolean', description: '配合 all：默认 true 只列清单，false 才真做' },
+        dryRun: { type: 'boolean', description: '演练：只把交接单写到磁盘，不建新会话、不动原会话；用在内存还宽裕的时候' },
         limit: { type: 'number', description: '配合 all：一次最多做几个，默认 5，上限 10' },
       },
       additionalProperties: false,

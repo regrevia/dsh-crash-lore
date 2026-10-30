@@ -11,6 +11,7 @@
 import v8 from 'node:v8';
 import { appendJsonl, paths, DEFAULT_HOME } from './core.mjs';
 import { recordFootprint } from './lib/sessions.mjs';
+import { wallFor } from './pressure.mjs';
 
 const DEFAULTS = {
   intervalMs: 20_000,
@@ -186,10 +187,13 @@ export function heapWarning(status = watchdogStatus(), options = {}) {
  */
 export function heapPressure(status = watchdogStatus(), options = {}) {
   if (!status?.samples) return { pct: 0, wallMB: 0, basis: 'none' };
-  const limitMB = Number(options.limitMB ?? status.limitMB ?? 0);
-  const crashMB = Number(options.crashMB ?? status.crashMB ?? 0);
-  const basis = crashMB > 0 ? 'crash' : 'margin';
-  const wallMB = crashMB > 0 ? Math.round(crashMB) : Math.round(limitMB * 0.85);
+  /* The wall follows the runtime it is measured in: a crash point recorded under another heap
+   * limit says nothing about this process, so it only counts while it still sits near that limit. */
+  const { wallMB, basis } = wallFor({
+    limitMB: Number(options.limitMB ?? status.limitMB ?? 0),
+    crashMB: Number(options.crashMB ?? status.crashMB ?? 0),
+    margin: options.margin,
+  });
   const pct = wallMB > 0 ? Math.round(((status.heapMB ?? 0) / wallMB) * 100) : 0;
   return { pct, wallMB, basis };
 }
@@ -199,5 +203,7 @@ export function heapLine(status = watchdogStatus()) {
   if (!status?.samples) return '内存观测 未开始采样';
   const trend = status.trendMBPerMin > 0 ? `，+${status.trendMBPerMin} MB/min` : '';
   const alarm = status.alarm && !status.alarm.released ? `；上次运行到过 ${status.alarm.heapMB} MB（${status.alarm.at}）` : '';
-  return `内存观测 ${status.heapMB} MB（峰值 ${status.peakMB} MB${trend}，上限约 ${status.criticalMB} MB 记警）${alarm}`;
+  const pressure = heapPressure(status);
+  const wall = pressure.wallMB > 0 ? `，${pressure.basis === 'crash' ? '崩溃点' : '按上限'} ${pressure.wallMB} MB` : '';
+  return `内存观测 ${status.heapMB} MB（峰值 ${status.peakMB} MB${trend}，上限 ${status.limitMB} MB${wall}）${alarm}`;
 }
