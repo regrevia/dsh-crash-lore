@@ -77,8 +77,10 @@ window.__ModuleLoader__.load({
       const known = Boolean(state) && Number.isFinite(state.pct);
       const pct = known ? state.pct : 0;
       const color = known ? (pct >= DANGER ? RED : pct >= WARN ? AMBER : 'inherit') : 'inherit';
+      /* 数字跟着环一起退：低压淡，接近上限才实。 */
+      const readout = !known ? 0.5 : pct >= DANGER ? 1 : pct >= WARN ? 0.8 : pct >= 50 ? 0.6 : 0.42;
       const style = { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, lineHeight: 1, color, whiteSpace: 'nowrap', userSelect: 'none', opacity: known ? 1 : 0.5 };
-      return h('span', { title: hintOf(known ? state : null), style }, h('span', { key: 'label', style: { opacity: 0.66 } }, '内存'), h(Ring, { key: 'ring', pct }), h('span', { key: 'pct', style: { fontVariantNumeric: 'tabular-nums' } }, known ? `${pct}%` : '–'));
+      return h('span', { title: hintOf(known ? state : null), style }, h('span', { key: 'label', style: { opacity: 0.66 } }, '内存'), h(Ring, { key: 'ring', pct }), h('span', { key: 'pct', style: { fontVariantNumeric: 'tabular-nums', opacity: readout } }, known ? `${pct}%` : '–'));
     }
 
     return {
