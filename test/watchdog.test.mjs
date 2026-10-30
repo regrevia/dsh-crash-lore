@@ -124,7 +124,7 @@ test('percent is against the wall that kills, not the nominal limit', () => {
 });
 
 /* 100% 必须始终等于「死过一次的堆」：状态行和百分比共用同一个 crashMB，不各算一套。 */
-test('死亡堆进了状态行：崩溃点当满阈值，越过 100% 直接说出来', async () => {
+test('死亡堆进了状态行：正常时不写崩溃点，越过 100% 才提醒', async () => {
   const { noteCrashMB } = await import('../watchdog.mjs');
   const run = driven([3600, 3600]);
   run.tick();
@@ -133,6 +133,9 @@ test('死亡堆进了状态行：崩溃点当满阈值，越过 100% 直接说�
   const status = { ...watcher.status(), crashMB: 3566 };
   assert.equal(heapPressure(status).pct, 101);
   assert.equal(heapPressure(status).basis, 'crash');
-  assert.match(heapLine(status), /崩溃点 3566 MB/);
+  assert.doesNotMatch(heapLine(status), /崩溃点|按上限/);
+  assert.match(heapLine(status), /注意随时可能崩溃/);
+  const calm = { ...status, heapMB: 1800 };
+  assert.doesNotMatch(heapLine(calm), /注意随时可能崩溃/);
   noteCrashMB(0);
 });

@@ -7,14 +7,25 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     # Whole matrix job stays inside the 10-minute CI budget (measured locally: cold install ~1s,
     # pack manifest check ~0.2s; most of the budget is npm test).
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: ['20', '22', '24']
+        exclude:
+          # 全量 Node 只跑 Linux；Windows / macOS 各跑一个就够抓住路径分隔符、大小写、权限位这类差异
+          - os: windows-latest
+            node: '20'
+          - os: windows-latest
+            node: '22'
+          - os: macos-latest
+            node: '20'
+          - os: macos-latest
+            node: '22'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

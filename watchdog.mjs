@@ -212,6 +212,6 @@ export function heapLine(status = watchdogStatus()) {
   const trend = status.trendMBPerMin > 0 ? `，+${status.trendMBPerMin} MB/min` : '';
   const alarm = status.alarm && !status.alarm.released ? `；上次运行到过 ${status.alarm.heapMB} MB（${status.alarm.at}）` : '';
   const pressure = heapPressure(status);
-  const wall = pressure.wallMB > 0 ? `，${pressure.basis === 'crash' ? '崩溃点' : '按上限'} ${pressure.wallMB} MB` : '';
-  return `内存观测 ${status.heapMB} MB（峰值 ${status.peakMB} MB${trend}，上限 ${status.limitMB} MB${wall}）${alarm}`;
+  const over = pressure.pct >= 100 ? '\n注意随时可能崩溃' : '';
+  return `内存观测 ${status.heapMB} MB（峰值 ${status.peakMB} MB${trend}，上限 ${status.limitMB} MB）${alarm}${over}`;
 }
