@@ -9,22 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import {
-  DEFAULT_HOME,
-  readIncidents,
-  readRules,
-  readState,
-  scan,
-  compactRules,
-  renderLorePrompt,
-  summarizeIncident,
-  upsertRule,
-  seedRules,
-  importCorpus,
-  PROMPT_HEADER,
-  storeDir,
-  migrateLegacyStore,
-} from './core.mjs';
+import { compactRules, DEFAULT_HOME, importCorpus, maxCrashHeapMB, migrateLegacyStore, PROMPT_HEADER, readIncidents, readRules, readState, renderLorePrompt, scan, seedRules, storeDir, summarizeIncident, upsertRule } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces, denial } from './defense.mjs';
 import { heapLine, heapPressure, noteCrashMB, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
 import { admit, readLive, wallFor } from './pressure.mjs';
@@ -237,22 +222,41 @@ function log(message) {
 /* The wall that actually kills this machine, read from its own crash log: V8 dies in old space
  * before the nominal limit, so the badge counts against the observed death heap, not the limit. */
 let crashWallCache = null;
+/* 崩溃点必须自己跟着日志变：文件没动就复用（一次 stat，不读盘），动了或超过一分钟就重算。
+ * 换了机器、换了崩溃记录、或另一个宿主刚写进新的一条，圈最多一分钟就跟上。 */
+const CRASH_WALL_TTL_MS = 60_000;
+let crashWallStamp = -1;
+let crashWallAt = 0;
 /* 底部状态圈的自检：路由到底挂上没有，只有这里知道。不进 prompt，只在 lifeguard_guard 里显示，
  * 免得「圈没数据」和「圈坏了」永远分不出来。 */
 const badgeState = { mounted: false, path: '/lifeguard/health', error: '' };
+/* 跨平台：Windows/Linux/macOS 都只看 mtimeMs；读不到（文件还没建、权限）就当没有。 */
+function statMtime(file) {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 function crashWallMB(home) {
-  if (crashWallCache !== null) return crashWallCache;
+  let stamp = 0;
+  try {
+    stamp = statMtime(paths(home).incidents);
+  } catch {
+    stamp = 0;
+  }
+  const fresh = crashWallCache !== null && stamp === crashWallStamp && Date.now() - crashWallAt < CRASH_WALL_TTL_MS;
+  if (fresh) return crashWallCache;
   let wall = 0;
   try {
-    for (const incident of readIncidents(home)) {
-      const match = /heap\s+(\d+)\s*MB/.exec(String(incident?.signature ?? ''));
-      const heap = match ? Number(match[1]) : 0;
-      if (heap > wall) wall = heap;
-    }
+    wall = maxCrashHeapMB(readIncidents(home));
   } catch {
     /* an unreadable store must not take down the badge */
   }
   crashWallCache = wall;
+  crashWallStamp = stamp;
+  crashWallAt = Date.now();
   return wall;
 }
 
@@ -600,6 +604,7 @@ export function apply(ctx, config = {}) {
    * "the host vanished" into "the heap was at 2.9 GB and climbing" while the session is still alive. */
   ctx.effect(() => {
     try {
+      noteCrashMB(crashWallMB(home));
       startWatchdog(home);
     } catch (error) {
       log(`内存观测未启动：${error?.message ?? error}`);
@@ -1216,6 +1221,7 @@ export function apply(ctx, config = {}) {
        * that already died repeatedly are the two facts the write gate cannot see. */
       const loops = crashLoops(readIncidents(home), { now: Date.now() });
       for (const line of loopLines(loops)) lines.push(line);
+      noteCrashMB(crashWallMB(home));
       const heap = watchdogStatus();
       lines.push(heapLine(heap));
       lines.push(badgeState.mounted ? `内存状态圈 已挂载 ${badgeState.path}` : `内存状态圈 未挂载${badgeState.error ? `（${badgeState.error}）` : ''}`);

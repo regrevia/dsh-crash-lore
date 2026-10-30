@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { correlateIncidents, crashLoops } from './lib/attribute.mjs';
 import { footprintBefore } from './lib/sessions.mjs';
 
-export const VERSION = '0.6.6';
+export const VERSION = '0.6.7';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 /* 新数据目录；旧版目录名只用于一次性迁移与读取回退。 */
@@ -561,6 +561,18 @@ export function parseArtifact(file) {
 
 export function readIncidents(home = DEFAULT_HOME) {
   return readJsonl(storeReadFile(paths(home).incidents, home));
+}
+
+/* 本机最高的一次致命堆：崩溃日志里所有 OOM 的 heap 取最大。纯函数，横竖都能测；
+ * Windows/Linux/macOS 只依赖签名文本，不碰路径分隔符。 */
+export function maxCrashHeapMB(incidents = []) {
+  let wall = 0;
+  for (const incident of incidents) {
+    const match = /heap\s+(\d+)\s*MB/.exec(String(incident?.signature ?? ''));
+    const heap = match ? Number(match[1]) : 0;
+    if (heap > wall) wall = heap;
+  }
+  return wall;
 }
 
 export function appendIncident(incident, home = DEFAULT_HOME) {
