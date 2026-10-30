@@ -446,3 +446,22 @@ test('升级改名：旧数据目录并进新目录，只搬不删，读写都�
   migrateLegacyStore(home);
   assert.equal(readIncidents(home).length, 1);
 });
+
+test('CRLF 不改变结论：Windows 检出/日志整份按 \\n 解析', () => {
+  const home = tmpHome();
+  const profileDir = path.join(home, 'profiles', 'desktop');
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-inner-browser-use': 'link:/opt/dev/dsh-inner-browser-use' } }));
+  const previous = process.env.DSH_PROFILE_DIR;
+  process.env.DSH_PROFILE_DIR = profileDir;
+  try {
+    const crlf = HOST_LOG.split('\n').join('\r\n');
+    const file = writeArtifact(home, 'crash-2026-10-28T09-15-33-952Z-host.log', crlf);
+    const incident = parseArtifact(file);
+    assert.equal(incident?.signature, 'TypeError · this.holding is not a function');
+    assert.equal(incident?.culprit?.name, 'dsh-inner-browser-use');
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR;
+    else process.env.DSH_PROFILE_DIR = previous;
+  }
+});

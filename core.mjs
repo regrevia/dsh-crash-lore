@@ -237,7 +237,7 @@ export function readArtifact(file) {
 /* ------------------------------------------------------------------ parsing */
 
 function headerOf(text) {
-  const head = text.split('\n--- ')[0] || '';
+  const head = normalizeNewlines(text).split('\n--- ')[0] || '';
   const out = {};
   for (const line of head.split('\n')) {
     const m = /^([a-z][a-z0-9 ]*):\s?(.*)$/.exec(line);

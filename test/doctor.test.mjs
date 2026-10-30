@@ -325,3 +325,10 @@ test('autoEligible：24 小时窗口按真实事件时间算，历史 100 次 + 
   appendIncident({ id: 'inc_loop_new', ts: three[0], lastTs: three[2], count: 3, occurrenceTimes: three, fingerprint: 'new', kind: 'crash', signature: 'boom', culprit: { type: 'plugin', name: 'dsh-bad' } }, home2);
   assert.equal(autoEligible(home2, 'dsh-bad').ok, true, '窗口内真崩了 3 次才算循环');
 });
+
+test('analyzePatch：CRLF 的 patch 一样能扫出条目', () => {
+  const text = ['patch:', '  - id: keep', '    disabled: false', ''].join('\r\n');
+  const result = analyzePatch(text);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blocks.map((block) => block.id), ['keep']);
+});

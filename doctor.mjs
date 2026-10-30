@@ -480,7 +480,7 @@ export function runDoctor(options = {}) {
   const writeFile = (file, text) => {
     const before = fs.readFileSync(file, 'utf8');
     originals.set(file, before);
-    fs.writeFileSync(file, text);
+    fs.writeFileSync(file, withEolOf(text, before));
   };
   try {
     // 1) 备份（先备份，再动手）
@@ -583,6 +583,11 @@ function listBackups(profileDir, prefix) {
  * A quarantine that only commented patch entries leaves a `${PATCH_FILE}.bak-doctor-*` but no
  * package.json backup. Find the newest patch backup that still holds an uncommented block for the name.
  */
+/* 写回时保留原文件的换行风格：Windows 上把 CRLF 改成 LF 会让整份文件看起来都变了。 */
+function withEolOf(text, reference) {
+  return String(reference ?? '').includes('\r\n') ? String(text).replace(/\r?\n/g, '\r\n') : text;
+}
+
 function findPatchOnlyRestore(profileDir, patchFile, name) {
   const currentText = readText(patchFile);
   if (currentText == null) {
@@ -699,7 +704,7 @@ export function restore(name, options = {}) {
   const writeFile = (file, text) => {
     const before = fs.readFileSync(file, 'utf8');
     originals.set(file, before);
-    fs.writeFileSync(file, text);
+    fs.writeFileSync(file, withEolOf(text, before));
   };
   try {
     const backupDeps = source.pkg.dependencies && typeof source.pkg.dependencies === 'object' ? source.pkg.dependencies : {};
