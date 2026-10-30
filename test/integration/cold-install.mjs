@@ -58,7 +58,8 @@ try {
 }
 record('p2-tarball', Boolean(tgz && fs.existsSync(tgz)), 'tarball produced', tgz ? `${path.basename(tgz)} ${fs.statSync(tgz).size}B` : 'missing');
 
-const listing = run('tar', ['-tzf', tgz]).stdout.split('\n').filter(Boolean);
+/* Windows 的 tar 输出 CRLF：不折掉行尾 \r，逐行比较会全部失配。 */
+const listing = run('tar', ['-tzf', tgz]).stdout.split(/\r?\n/).filter(Boolean);
 const has = (name) => listing.some((row) => row === `package/${name}` || row.startsWith(`package/${name}/`));
 record('p3-ships-defense', has('defense.mjs') && has('guard.mjs') && has('index.js') && has('cordis.patch.yml'), 'defense.mjs + guard.mjs + index.js + cordis.patch.yml in tarball', ['defense.mjs', 'guard.mjs', 'index.js', 'cordis.patch.yml'].filter((f) => !has(f)).join(', ') || 'all present');
 record('p4-ships-locale-seed', has('locale/en.json') && has('locale/zh.json') && has('rules.seed.json'), 'locale/en.json + locale/zh.json + rules.seed.json', [has('locale/en.json'), has('locale/zh.json'), has('rules.seed.json')].join('/'));
