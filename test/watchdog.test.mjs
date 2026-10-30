@@ -122,3 +122,17 @@ test('percent is against the wall that kills, not the nominal limit', () => {
   assert.equal(guess.basis, 'margin');
   assert.equal(guess.wallMB, 3563);
 });
+
+/* 100% 必须始终等于「死过一次的堆」：状态行和百分比共用同一个 crashMB，不各算一套。 */
+test('死亡堆进了状态行：崩溃点当满阈值，越过 100% 直接说出来', async () => {
+  const { noteCrashMB } = await import('../watchdog.mjs');
+  const run = driven([3600, 3600]);
+  run.tick();
+  const watcher = run.watcher;
+  noteCrashMB(3566);
+  const status = { ...watcher.status(), crashMB: 3566 };
+  assert.equal(heapPressure(status).pct, 101);
+  assert.equal(heapPressure(status).basis, 'crash');
+  assert.match(heapLine(status), /崩溃点 3566 MB/);
+  noteCrashMB(0);
+});

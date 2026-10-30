@@ -29,7 +29,8 @@ window.__ModuleLoader__.load({
     function hintOf(state) {
       if (!state || !Number.isFinite(state.pct)) return '内存读数还没到';
       const used = `${state.heapMB} / ${state.wallMB} MB`;
-      if (state.pct >= DANGER) return `接近内存上限（${used}）：重启 DSH 才会释放`;
+      if (state.pct >= 100) return `已越过本机崩溃点（${used}）：随时可能被杀，先收尾再重启`;
+      if (state.pct >= DANGER) return `接近崩溃点（${used}）：重启 DSH 才会释放`;
       return `内存占用 ${used}`;
     }
 

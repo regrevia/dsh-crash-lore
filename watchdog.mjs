@@ -154,8 +154,16 @@ function watched() {
 }
 
 /** Latest host heap picture for the status card; all zeros when the timer never started. */
+/* 本机实测过的死亡堆（来自自己的崩溃日志）。状态行和百分比都按它算，不另外藏一份。 */
+let knownCrashMB = 0;
+export function noteCrashMB(mb) {
+  const n = Number(mb);
+  knownCrashMB = Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
 export function watchdogStatus() {
-  return active ? active.status() : createWatchdog({ running: false }).status();
+  const status = active ? active.status() : createWatchdog({ running: false }).status();
+  return { ...status, crashMB: knownCrashMB };
 }
 
 export function stopWatchdog() {

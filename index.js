@@ -26,7 +26,7 @@ import {
   migrateLegacyStore,
 } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces, denial } from './defense.mjs';
-import { heapLine, heapPressure, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
+import { heapLine, heapPressure, noteCrashMB, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
 import { admit, readLive, wallFor } from './pressure.mjs';
 import { footprintLines, oomEvidenceLines, sessionFootprint } from './lib/sessions.mjs';
 import { crashLoops, loopLines } from './lib/attribute.mjs';
@@ -270,6 +270,8 @@ function handoffRoom(home) {
 function healthPayload(home) {
   try {
     const status = watchdogStatus();
+    /* 状态行和这里必须是同一把尺子：读完历史先告诉观测层，100% 才始终等于「死过一次的堆」。 */
+    noteCrashMB(crashWallMB(home));
     const pressure = heapPressure(status, { limitMB: status?.limitMB, crashMB: crashWallMB(home) });
     const row = { enabled: true, pct: pressure.pct, wallMB: pressure.wallMB, basis: pressure.basis };
     Object.assign(row, { heapMB: status?.heapMB ?? 0, peakMB: status?.peakMB ?? 0, limitMB: status?.limitMB ?? 0 });
