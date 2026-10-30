@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { compactRules, DEFAULT_HOME, importCorpus, maxCrashHeapMB, migrateLegacyStore, PROMPT_HEADER, readIncidents, readRules, readState, renderLorePrompt, scan, seedRules, storeDir, summarizeIncident, upsertRule } from './core.mjs';
 import { guardWrite, guardShell, preExecute, liveSurfaces, denial } from './defense.mjs';
 import { heapLine, heapPressure, noteCrashMB, startWatchdog, stopWatchdog, watchdogStatus } from './watchdog.mjs';
+import { DEFAULT_BUDGET_MB, SWEEP_EVERY_MS, maybeSweep } from './tmp.mjs';
 import { admit, readLive, wallFor } from './pressure.mjs';
 import { footprintLines, oomEvidenceLines, sessionFootprint } from './lib/sessions.mjs';
 import { crashLoops, loopLines } from './lib/attribute.mjs';
@@ -611,6 +612,27 @@ export function apply(ctx, config = {}) {
     }
     return () => stopWatchdog();
   }, 'lifeguard: heap watchdog');
+
+  /* 会话快照落在临时目录，几百 MB 一份；启动清一次，之后按半小时一次兜着，预算默认 5 GB（config.tmpBudgetMB 可改）。 */
+  ctx.effect(() => {
+    const budgetMB = Number.isFinite(config.tmpBudgetMB) ? Math.max(256, Math.min(102400, config.tmpBudgetMB)) : DEFAULT_BUDGET_MB;
+    const ttlMs = (Number.isFinite(config.tmpTtlHours) ? Math.max(1, Math.min(168, config.tmpTtlHours)) : 6) * 60 * 60 * 1000;
+    const sweep = () => {
+      const result = maybeSweep({ budgetMB, ttlMs });
+      if (result?.removed) log(`清理临时会话快照 ${result.removed} 份，释放 ${result.freedMB} MB（上限 ${budgetMB} MB）`);
+    };
+    sweep();
+    let timer = null;
+    try {
+      timer = setInterval(sweep, SWEEP_EVERY_MS);
+      timer.unref?.();
+    } catch {
+      /* no timer service */
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, 'lifeguard: temp janitor');
 
   /* Health badge route: the composer ring polls it, so the same reading reaches the person as an
    * always-visible indicator instead of a line in every prompt. Turning the badge off removes the

@@ -19,6 +19,14 @@ window.__ModuleLoader__.load({
     const AMBER = '#d9930d';
     /* 感叹号字号，只给字形用。 */
     const MARK_FONT = 9;
+    /* 浮层压在圈上方：一行读数，超 100% 才两行。 */
+    const tipStyle = (visible) => ({
+      position: 'absolute', bottom: 'calc(100% + 8px)', left: '50%', padding: '6px 9px', zIndex: 30,
+      transform: `translate(-50%, ${visible ? 0 : 2}px)`, borderRadius: 7, background: '#2c2c2e',
+      color: '#fff', fontSize: 12, lineHeight: 1.45, whiteSpace: 'nowrap', pointerEvents: 'none',
+      boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35)', opacity: visible ? 1 : 0,
+      transition: 'opacity 120ms ease, transform 120ms ease',
+    });
 
     function colorOf(pct) {
       if (pct >= DANGER) return RED;
@@ -26,11 +34,12 @@ window.__ModuleLoader__.load({
       return 'currentColor';
     }
 
-    function hintOf(state) {
-      if (!state || !Number.isFinite(state.pct)) return '内存读数还没到';
-      if (state.pct >= 100) return '注意随时可能崩溃';
-      if (state.pct >= DANGER) return '内存接近上限，重启 DSH 才会释放';
-      return `内存占用 ${state.heapMB} / ${state.wallMB} MB`;
+    /* 悬停浮层只给读数；过了 100% 才追加一句后果。 */
+    function tipLines(state) {
+      if (!state || !Number.isFinite(state.pct)) return ['内存读数还没到'];
+      const lines = [`内存占用 ${state.heapMB}/${state.wallMB} MB`];
+      if (state.pct >= 100) lines.push('注意随时可能崩溃');
+      return lines;
     }
 
     function Ring(props) {
@@ -79,8 +88,16 @@ window.__ModuleLoader__.load({
       const color = known ? (pct >= DANGER ? RED : pct >= WARN ? AMBER : 'inherit') : 'inherit';
       /* 数字跟着环一起退：低压淡，接近上限才实。 */
       const readout = !known ? 0.5 : pct >= DANGER ? 1 : pct >= WARN ? 0.8 : pct >= 50 ? 0.6 : 0.42;
-      const style = { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, lineHeight: 1, color, whiteSpace: 'nowrap', userSelect: 'none', opacity: known ? 1 : 0.5 };
-      return h('span', { title: hintOf(known ? state : null), style }, h('span', { key: 'label', style: { opacity: 0.66 } }, '内存'), h(Ring, { key: 'ring', pct }), h('span', { key: 'pct', style: { fontVariantNumeric: 'tabular-nums', opacity: readout } }, known ? `${pct}%` : '–'));
+      const [hover, setHover] = React.useState(false);
+      const style = { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, lineHeight: 1, color, whiteSpace: 'nowrap', userSelect: 'none', opacity: known ? 1 : 0.5, cursor: 'default' };
+      const lines = tipLines(known ? state : null);
+      /* 原生 title 配色跟系统走，和侧栏对不上。 */
+      return h('span', { onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false), onFocus: () => setHover(true), onBlur: () => setHover(false), 'aria-label': lines.join('，'), style },
+        h('span', { key: 'label', style: { opacity: 0.66 } }, '内存'),
+        h(Ring, { key: 'ring', pct }),
+        h('span', { key: 'pct', style: { fontVariantNumeric: 'tabular-nums', opacity: readout } }, known ? `${pct}%` : '–'),
+        h('span', { key: 'tip', role: 'tooltip', style: tipStyle(hover) }, lines.map((line, at) => h('span', { key: at, style: { display: 'block' } }, line))),
+      );
     }
 
     return {

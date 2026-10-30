@@ -5,13 +5,30 @@ import os from 'node:os';
 import path from 'node:path';
 import { LOCK_FRESH_MS, PLAIN_RATIO, RESTORE_FACTOR, sessionFootprint, footprintLines } from '../lib/sessions.mjs';
 
+const created = [];
+
+/* 会话文件只用来量大小，写真实字节会让一次测试吃掉几百 MB 磁盘（多次跑满过盘）。用稀疏文件给长度即可。 */
+function sparseFile(file, bytes) {
+  const fd = fs.openSync(file, 'w');
+  try {
+    fs.ftruncateSync(fd, bytes);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+test.after(() => {
+  for (const home of created) fs.rmSync(home, { recursive: true, force: true });
+});
+
 function workspace() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeguard-sessions-'));
+  created.push(home);
   const make = (project, id, packedMB, lockAgeMs) => {
     const dir = path.join(home, 'sessions', project, id);
     fs.mkdirSync(dir, { recursive: true });
     const transcript = path.join(dir, 'session.v4.jsonl.zstd');
-    fs.writeFileSync(transcript, Buffer.alloc(packedMB * 1024 * 1024, 1));
+    sparseFile(transcript, packedMB * 1024 * 1024);
     /* Age the transcript with the lock: a resumed session appends to the same file, so freshness
      * is the newer of the two and a fixture that only ages one of them is not a stale session. */
     if (lockAgeMs !== null) {
@@ -58,7 +75,7 @@ test('estimate crosses the risk line only when enough heap is at stake', () => {
   assert.equal(small.ceilingRisk, false);
   make('--proj--', 'session-big', 400, 60_000);
   /* The dir list is cached for half an hour; a refresh is the documented way to see new dirs. */
-  const big = sessionFootprint(home, { indexTtlMs: 1 });
+  const big = sessionFootprint(home, { refresh: true });
   assert.equal(big.ceilingRisk, true);
   assert.ok(big.estimateGB >= 2 && big.estimateGB < 9);
 });

@@ -31,6 +31,7 @@
     "state.mjs",
     "pressure.mjs",
     "watchdog.mjs",
+    "tmp.mjs",
     "client.js",
     "lib/*.mjs",
     "rules.seed.json",

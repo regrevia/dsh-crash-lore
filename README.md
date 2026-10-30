@@ -152,6 +152,10 @@ live 面 = profile 目录本身 + profile 里所有插件源码（含 `link:` �
 
 开关：`config.healthBadge`（默认开）。
 
+## 临时会话快照
+
+崩溃排查会把会话快照复制到系统临时目录，一份几十到几百 MB，跑几次就能吃掉几十 GB（本机真到过 58 GB，磁盘只剩 42 GB）。现在启动时清一次、之后每 30 分钟清一次：删掉超过 6 小时的和超预算的，从最老的删起，刚建出来十分钟内的不删。默认预算 5 GB，`config.tmpBudgetMB` 改上限（256–102400），`config.tmpTtlHours` 改保留期（1–168 小时）。只认自己造的 `lifeguard-sessions-*`、`crash-lore-sessions-*` 等前缀，别的文件一个不碰。
+
 ## 安全边界
 
 - 只读日志，不改 DSH 安装目录；写盘只限 `$DSH_HOME/lifeguard/`。

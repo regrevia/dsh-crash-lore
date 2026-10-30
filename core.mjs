@@ -301,27 +301,36 @@ export function pluginIndex(profileDir = process.env.DSH_PROFILE_DIR || '') {
     const local = /^(?:link|file):(.+)$/.exec(raw);
     if (local) dir = path.resolve(profileDir, local[1]);
     else dir = path.join(profileDir, 'node_modules', name);
-    index.push({ name, dir });
+    index.push({ name, dir, raw: local ? local[1] : null });
   }
   return index;
 }
 
+/* 崩溃日志里的帧路径是 POSIX 写法，Windows 上 path.resolve/sep 会把它们对比错，统一按 / 比较。 */
+function slashed(value) {
+  return String(value ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 function culpritFromFrame(frame, profileDir, home) {
   if (!frame?.file) return null;
-  const file = frame.file;
+  const file = slashed(frame.file);
   for (const entry of pluginIndex(profileDir)) {
-    if (entry.dir && (file === entry.dir || file.startsWith(`${entry.dir}${path.sep}`))) {
-      return { type: 'plugin', name: entry.name, evidence: `${path.relative(entry.dir, file)}:${frame.line ?? '?'}` };
+    const dirs = [entry.dir, entry.raw].filter(Boolean).map(slashed);
+    for (const dir of dirs) {
+      if (file === dir || file.startsWith(`${dir}/`)) {
+        return { type: 'plugin', name: entry.name, evidence: `${file.slice(dir.length + 1) || path.basename(file)}:${frame.line ?? '?'}` };
+      }
     }
   }
-  if (file.includes(`${path.sep}app.asar${path.sep}`) || file.includes('/deepseek') && file.includes('node_modules')) {
-    return { type: 'core', name: 'deepseek-harness', evidence: path.basename(file) };
+  if (file.includes('/app.asar/') || (file.includes('/deepseek') && file.includes('node_modules'))) {
+    return { type: 'core', name: 'deepseek-harness', evidence: file.split('/').pop() };
   }
-  if (file.startsWith(os.homedir())) {
-    const rel = path.relative(os.homedir(), file).split(path.sep);
+  const homeDir = slashed(home || os.homedir());
+  if (file.startsWith(`${homeDir}/`)) {
+    const rel = file.slice(homeDir.length + 1).split('/');
     const known = rel.findIndex((part) => part === 'node_modules');
-    const name = known > 0 ? rel[known + 1] : rel[rel.length - 2];
-    return { type: 'plugin', name: name || null, evidence: path.basename(file) };
+    const name = known >= 0 ? rel[known + 1] : rel[rel.length - 2];
+    return { type: 'plugin', name: name || null, evidence: rel[rel.length - 1] };
   }
   return null;
 }

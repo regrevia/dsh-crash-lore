@@ -637,9 +637,9 @@ export function restore(name, options = {}) {
     if (options.dryRun === true) {
       return { ok: true, action: 'dry-run', changed: false, dryRun: true, name: target, plan: { name: target, patchOnly: true, patchRestored: patchOnly.restored, backup: patchOnly.backup }, lines: [`将从 ${patchOnly.backup} 恢复 cordis.patch.yml 中 ${target} 的 ${patchOnly.restored} 个条目`] };
     }
-    const patchBefore = readText(patchFile);
+    const patchBefore = fs.readFileSync(patchFile, 'utf8');
     try {
-      fs.writeFileSync(patchFile, patchOnly.text);
+      fs.writeFileSync(patchFile, withEolOf(patchOnly.text, patchBefore));
       const state = readState(home);
       const quarantine = Array.isArray(state.quarantine) ? state.quarantine : [];
       const profile = path.basename(profileDir);
