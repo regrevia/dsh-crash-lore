@@ -19,8 +19,10 @@ function record(id, ok, expected, actual) {
   results.push({ id, ok });
   console.log(`- ${(ok ? 'PASS' : 'FAIL').padEnd(5)} ${id} · expected: ${expected} · actual: ${actual}`);
 }
+/* Windows 上 npm 是 npm.cmd：不带 shell 的 spawn 会 ENOENT。 */
 function run(cmd, args, opts = {}) {
-  return spawnSync(cmd, args, { encoding: 'utf8', timeout: 120000, ...opts });
+  const viaShell = cmd === 'npm' && process.platform === 'win32';
+  return spawnSync(viaShell ? 'npm.cmd' : cmd, args, { encoding: 'utf8', timeout: 120000, shell: viaShell, ...opts });
 }
 function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
