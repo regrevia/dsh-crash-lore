@@ -18,6 +18,7 @@ import {
   upsertRule,
   renderLorePrompt,
   matchRules,
+  seedRules,
   VERSION,
   migrateLegacyStore,
   storeDir,
@@ -464,4 +465,12 @@ test('CRLF 不改变结论：Windows 检出/日志整份按 \\n 解析', () => {
     if (previous === undefined) delete process.env.DSH_PROFILE_DIR;
     else process.env.DSH_PROFILE_DIR = previous;
   }
+});
+
+test('随包规则不按 URL.pathname 找：Windows 上也能从默认路径导入', () => {
+  const home = tmpHome();
+  const result = seedRules(home);
+  assert.ok(result.seeded > 0, `期望从 ${result.file} 导入规则，实际 ${result.seeded} 条`);
+  assert.ok(readRules(home).length > 0);
+  assert.equal(path.resolve(result.file), path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'rules.seed.json'));
 });

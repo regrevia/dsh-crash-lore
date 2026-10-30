@@ -204,11 +204,14 @@ const incidentLines = fs.existsSync(incidentsFile) ? fs.readFileSync(incidentsFi
 const authorIncidents = incidentLines.filter((l) => /vantage|dsh-vantage|regrevia/i.test(l));
 record('p18-no-author-incidents', incidentLines.length === 0 && info.denials === 0, "author's incidents are not the user's", `${incidentLines.length} incident line(s), ${authorIncidents.length} matching author data, ${info.denials} denial(s)`);
 record('p19-paths-under-home', fs.existsSync(crashDir) && crashDir.startsWith(root), 'default paths resolve under DSH_HOME', path.relative(root, crashDir) || crashDir);
-record('p20-no-side-effects', !fs.existsSync('/tmp/cl-acceptance-should-not-run.marker'), 'denied content never executed', fs.existsSync('/tmp/cl-acceptance-should-not-run.marker') ? 'marker EXISTS' : 'absent');
+/* 旧那条「标记文件没被写出来」在 Windows 上本来就写不进去，等于白给；
+ * 改成核对整场演练只写进了这个一次性根目录。 */
+const underRoot = [home, profile, installed].every((dir) => path.resolve(dir).startsWith(path.resolve(root)));
+record('p20-no-side-effects', underRoot, 'fixture writes stay inside the throw-away root', underRoot ? 'all under root' : [home, profile, homeDir].filter((dir) => !path.resolve(dir).startsWith(path.resolve(root))).join(', '));
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nsummary: ${results.length - failed.length} pass, ${failed.length} fail (artefacts ${root})`);
-const out = path.join('/tmp', 'cl-acceptance-cold-install.json');
+const out = path.join(os.tmpdir(), 'cl-acceptance-cold-install.json');
 fs.writeFileSync(out, `${JSON.stringify({ at: new Date().toISOString(), tarball: path.basename(tgz), results }, null, 2)}\n`);
 console.log(`results: ${out}`);
 process.exit(failed.length ? 1 : 0);

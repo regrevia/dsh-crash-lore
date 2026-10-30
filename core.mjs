@@ -10,6 +10,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+
+/* URL.pathname 在 Windows 上带前导斜杠，拼出来是 \D:\...；fileURLToPath 才是可用的本地路径。 */
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 import { correlateIncidents, crashLoops } from './lib/attribute.mjs';
 import { footprintBefore } from './lib/sessions.mjs';
 
@@ -658,7 +662,7 @@ export function upsertRule(rule, home = DEFAULT_HOME) {
  * Existing rules keep their hit counts and memoryId; the seed only fills what is missing.
  */
 export function seedRules(home = DEFAULT_HOME, seedFile) {
-  const file = seedFile ?? path.join(path.dirname(new URL(import.meta.url).pathname), 'rules.seed.json');
+  const file = seedFile ?? path.join(HERE, 'rules.seed.json');
   const doc = readJson(file, null);
   const list = Array.isArray(doc?.rules) ? doc.rules : Array.isArray(doc) ? doc : [];
   if (!list.length) return { seeded: 0, file };
@@ -685,8 +689,7 @@ export function seedRules(home = DEFAULT_HOME, seedFile) {
  * (a session transcript kept only survives as a fixture). Import those so rules can point at them.
  */
 export function importCorpus(home = DEFAULT_HOME, corpusFile) {
-  const here = path.dirname(new URL(import.meta.url).pathname);
-  const file = corpusFile ?? path.join(here, 'corpus', 'incidents.normalized.jsonl');
+  const file = corpusFile ?? path.join(HERE, 'corpus', 'incidents.normalized.jsonl');
   const list = readJsonl(file);
   if (!list.length) return { imported: 0, file };
   const stored = readIncidents(home);
