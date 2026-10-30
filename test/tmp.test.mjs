@@ -56,6 +56,16 @@ test('超过保留期的清掉，新鲜的留着', () => {
   assert.equal(fs.existsSync(fresh), true);
 });
 
+test('空壳目录过了十分钟就收掉', () => {
+  const home = root();
+  const husk = snapshot(home, 'lifeguard-sessions-husk', 0, 11 * 60 * 1000);
+  const fresh = snapshot(home, 'lifeguard-sessions-new', 0, 60_000);
+  const result = sweepTemp({ roots: [home] });
+  assert.equal(result.removed, 1);
+  assert.equal(fs.existsSync(husk), false);
+  assert.equal(fs.existsSync(fresh), true);
+});
+
 test('超预算时从最老的删到预算内', () => {
   const home = root();
   const oldest = snapshot(home, 'lifeguard-sessions-1', 100, 5 * 60 * 60 * 1000);

@@ -88,7 +88,9 @@ export function sweepTemp(options = {}) {
   const entries = listTemp(options.roots);
   const stale = entries.filter((entry) => now - entry.mtimeMs > ttlMs);
   const removable = (entry) => !protect.has(path.resolve(entry.dir)) && now - entry.mtimeMs > MIN_AGE_MS;
-  const doomed = new Set(stale.filter(removable));
+  /* 空壳目录占个名字不占空间，但几百个也碍眼；过十分钟还没内容就收掉。 */
+  const husks = entries.filter((entry) => entry.bytes === 0 && now - entry.mtimeMs > MIN_AGE_MS);
+  const doomed = new Set([...stale.filter(removable), ...husks.filter(removable)]);
   let keptMB = Math.round(entries.reduce((sum, entry) => sum + entry.bytes, 0) / (1024 * 1024));
   const budget = Math.round(budgetMB);
   if (keptMB > budget) {
