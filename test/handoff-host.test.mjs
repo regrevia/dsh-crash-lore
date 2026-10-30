@@ -348,3 +348,46 @@ test('批量里一个都建不起来时，每个都说清原因，不出现 unde
   assert.doesNotMatch(result.text, /undefined/);
   ctx.dispose();
 });
+
+test('dryRun 只把交接单写到磁盘，不建会话、不改原会话', async () => {
+  const { result, calls, home } = await run({ llm: { stream: goodStream }, args: { dryRun: true } });
+  const preview = path.join(home, 'lifeguard', 'handoff', 'preview-parent-1.md');
+  assert.ok(fs.existsSync(preview), '演练应该留下 preview 文件');
+  assert.match(fs.readFileSync(preview, 'utf8'), /把底部状态圈换成圆环/);
+  assert.equal(result.ok, true);
+  assert.equal(result.dryRun, true);
+  assert.equal(result.briefPath, preview);
+  assert.equal(result.briefChars, fs.readFileSync(preview, 'utf8').length);
+  assert.match(result.text, /演练/);
+  assert.equal(calls.create.length, 0);
+  assert.equal(calls.archive.length, 0);
+  assert.equal(calls.rename.length, 0);
+  assert.equal(calls.prompt.length, 0);
+  assert.equal(fs.existsSync(path.join(home, 'lifeguard', 'lineage.jsonl')), false);
+});
+
+test('真转世时交接单在硬盘上且长度一致，ok 才为真', async () => {
+  const { result, home } = await run({ llm: { stream: goodStream } });
+  const briefPath = path.join(home, 'lifeguard', 'handoff', 'child-1.md');
+  assert.ok(fs.existsSync(briefPath), '交接单应该落盘');
+  assert.equal(fs.readFileSync(briefPath, 'utf8').length, result.briefChars);
+  assert.equal(result.ok, true);
+  assert.equal(result.delivered, 'message');
+  assert.equal(result.briefPath, briefPath);
+});
+
+test('交接单写不进硬盘时明说这次不算数，并把正文带回结果里', async () => {
+  const home = tmp();
+  const host = fakeHost({ llm: { stream: goodStream } });
+  const ctx = makeContext(host.services);
+  apply(ctx, { home });
+  /* 把 handoff 目录占成一个文件：再往里写必然失败，模拟磁盘不可写。 */
+  fs.mkdirSync(path.join(home, 'lifeguard'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'lifeguard', 'handoff'), '');
+  const result = await handoffTool(ctx).execute({ sessionId: 'parent-1' }, { signal: new AbortController().signal });
+  assert.equal(result.ok, false);
+  assert.equal(result.briefPath, undefined);
+  assert.match(result.text, /不算数|没写成功/);
+  assert.match(result.text, /把底部状态圈换成圆环/, '落盘失败时正文必须回填到工具结果');
+  ctx.dispose();
+});

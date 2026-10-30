@@ -489,7 +489,9 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
     generation,
     delivered,
     archived,
-    briefPath,
+    /* 没写下去就不报路径：路径存在感会让人以为硬盘上有东西。 */
+    briefPath: briefSaved ? briefPath : undefined,
+    briefChars: brief.text.length,
     llm: model ? `${model.provider}/${model.model}` : '',
   };
 }
@@ -1137,8 +1139,11 @@ export function apply(ctx, config = {}) {
       const sourceId = asked || me;
       if (!sourceId) return '不知道要转世哪个会话：请传 sessionId。什么都没改。';
       const one = await handoffOne(ctx, { home, state, sessions, call, sourceId, current: me, args });
-      if (!one.ok) return one.text;
-      return { text: one.text, childId: one.childId, parentId: one.parentId, generation: one.generation, delivered: one.delivered, archived: one.archived, briefPath: one.briefPath, llm: one.llm };
+      /* ok 只认硬盘：交接单真的写下去且回读一致才是 true。失败的正文已经回填在 text 里。 */
+      const out = { text: one.text, ok: one.ok === true, briefPath: one.briefPath, briefChars: one.briefChars, delivered: one.delivered };
+      if (one.dryRun) return { ...out, dryRun: true };
+      if (!one.ok) return out;
+      return { ...out, childId: one.childId, parentId: one.parentId, generation: one.generation, archived: one.archived, llm: one.llm };
     },
   })), 'lifeguard: lifeguard_handoff');
 
