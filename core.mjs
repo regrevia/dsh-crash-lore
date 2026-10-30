@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { correlateIncidents, crashLoops } from './lib/attribute.mjs';
 import { footprintBefore } from './lib/sessions.mjs';
 
-export const VERSION = '0.6.7';
+export const VERSION = '0.6.8';
 export const DEFAULT_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 
 /* 新数据目录；旧版目录名只用于一次性迁移与读取回退。 */
@@ -116,10 +116,15 @@ export function appendJsonl(file, value) {
   fs.appendFileSync(file, `${JSON.stringify(value)}\n`);
 }
 
+/* 行尾统一：Windows 检出/日志常用 CRLF，解析器只认 \n 就会漏判整份文件。读盘边界统一一次。 */
+export function normalizeNewlines(text) {
+  return String(text ?? '').replace(/\r\n?/g, '\n');
+}
+
 export function readJsonl(file) {
   let text = '';
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = normalizeNewlines(fs.readFileSync(file, 'utf8'));
   } catch {
     return [];
   }
@@ -221,12 +226,12 @@ export function readArtifact(file) {
     try {
       const buf = Buffer.alloc(MAX_ARTIFACT_BYTES);
       fs.readSync(fd, buf, 0, MAX_ARTIFACT_BYTES, 0);
-      return buf.toString('utf8');
+      return normalizeNewlines(buf.toString('utf8'));
     } finally {
       fs.closeSync(fd);
     }
   }
-  return fs.readFileSync(file, 'utf8');
+  return normalizeNewlines(fs.readFileSync(file, 'utf8'));
 }
 
 /* ------------------------------------------------------------------ parsing */

@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { paths, readIncidents, readState, writeState } from './core.mjs';
+import { normalizeNewlines, paths, readIncidents, readState, writeState } from './core.mjs';
 
 const CULPRIT_TYPES = new Set(['plugin', 'package']);
 const PATCH_FILE = 'cordis.patch.yml';
@@ -50,7 +50,7 @@ function readJsonFile(file) {
 
 function readText(file) {
   try {
-    return fs.readFileSync(file, 'utf8');
+    return normalizeNewlines(fs.readFileSync(file, 'utf8'));
   } catch {
     return null;
   }
@@ -123,7 +123,7 @@ const KEY_RE = /^([ ]*)([A-Za-z_][\w-]*)\s*:\s*(.*)$/;
  * 不解释 anchors、flow、多文档；看不懂就报错让调用方放弃，而不是猜。
  */
 export function analyzePatch(text) {
-  const source = String(text ?? '');
+  const source = normalizeNewlines(text);
   const lines = source.split('\n');
   const blocks = [];
   const stack = [];

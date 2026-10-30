@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
       if (!state || !Number.isFinite(state.pct)) return '内存读数还没到';
       if (state.pct >= 100) return '注意随时可能崩溃';
       if (state.pct >= DANGER) return '内存接近上限，重启 DSH 才会释放';
-      return `内存占用 ${state.heapMB} MB`;
+      return `内存占用 ${state.heapMB} / ${state.wallMB} MB`;
     }
 
     function Ring(props) {
