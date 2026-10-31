@@ -330,7 +330,9 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
   const events = inspection?.events;
   /* 确定性那份先算：模型没答上来、堆太高不敢调、或者用户关掉 llm 时，转世也必须有交接单。 */
   const fallback = buildBrief({ parentId: sourceId, events });
-  const childTitle = clip(`${fallback.title} · 转世`, 40);
+  /* 参数里点了标题就用它：0.6.8 之前这里只认原标题，传了也白传。 */
+  const asked = typeof args?.title === 'string' ? clip(args.title.trim(), 40) : '';
+  const childTitle = asked || clip(`${fallback.title} · 转世`, 40);
   /* 演练：现在的水位还宽裕，就先把交接单写到磁盘；真到要退出的那一刻不用再读一遍记录。
    * 不建子会话、不动原会话，可以反复跑，每次都覆盖同一份 preview。 */
   if (args?.dryRun === true) {
