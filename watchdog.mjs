@@ -172,8 +172,9 @@ export function stopWatchdog() {
 }
 
 /**
- * The sentence that has to reach the model while the host still has room: an alarm kept only in
- * the status card is read by nobody until someone asks, and the wall does not wait to be asked.
+ * The long-form alarm sentence, kept for callers that want it in a panel or a report. The plugin
+ * no longer puts it in the prompt: the composer badge and `lifeguard_guard` carry it, and a line
+ * that repeats in every request costs context on the machine that least has room for it.
  * Empty below the warning line, so a healthy machine pays nothing.
  */
 export function heapWarning(status = watchdogStatus(), options = {}) {

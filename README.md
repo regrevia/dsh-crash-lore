@@ -14,7 +14,7 @@
 
 | 能力 | 入口 |
 | --- | --- |
-| 提示词里常驻一段精简约束 | systemPrompt 段 `lifeguard: rules`，默认 ≤1000 字符，按 fatal/boot/lint 排序 |
+| 规则清单只在面板和 `lifeguard_rules` 里看 | 默认不写进提示词；要恢复常驻约束，把 `promptChars` 设成 300–2000 |
 | 扫描崩溃日志 | 工具 `lifeguard_scan` |
 | 查规则 | 工具 `lifeguard_rules` |
 | 沉淀新规则 | 工具 `lifeguard_record` |
