@@ -96,6 +96,16 @@
           "engines": {
             "dsh": ">=0.2.0-rc.1"
           }
+        },
+        {
+          "version": "0.7.0",
+          "publishTimestamp": 1793423218,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0-rc.1"
+          }
         }
       ]
     }

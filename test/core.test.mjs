@@ -206,6 +206,8 @@ test('rules: upsert by title, match by signature regex, render budget', () => {
   assert.equal(readRules(home).length, 1);
   const incident = parseArtifact(writeArtifact(home, 'crash-c-host.log', HOST_LOG));
   assert.deepEqual(matchRules(incident, readRules(home)).map((item) => item.id), [rule.id]);
+  /* 0 = 不进提示词：规则清单只在面板里看（默认值），别再把每一轮请求撑长。 */
+  assert.equal(renderLorePrompt(readRules(home), { maxChars: 0 }), '');
   const prompt = renderLorePrompt(readRules(home), { maxChars: 200 });
   assert.ok(prompt.includes('事件回调不要抛未捕获异常'));
   assert.ok(prompt.length <= 200 + 40);

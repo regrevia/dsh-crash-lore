@@ -177,7 +177,7 @@ function makeConfig() {
     return z.object({
       mode: marked,
       home: z.string().description('崩溃日志与规则所在目录'),
-      promptChars: z.number().default(1000).description('提示词里规则的字数上限'),
+      promptChars: z.number().default(0).description('提示词里规则的字数上限；0 表示不写进提示词，只在面板里看'),
       guard: z.boolean().description('旧开关，等价于 mode=off'),
       monitorOnly: z.boolean().description('旧开关，等价于 mode=observe'),
       installCheck: z.boolean().default(true).description('装插件前先跟已装的比一遍：重名、缺依赖、版本、skill 撞车'),
@@ -373,6 +373,19 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
   }
   const childId = child?.sessionId;
   if (typeof childId !== 'string' || !childId) return { ok: false, text: '没有拿到新会话 id，原会话没动，可以重试。' };
+  /* 新会话默认不进左侧列表：建出来就挂到它 cwd 所属的工作区，转世完就能直接点开。
+   * 挂不上不算转世失败，只是要告诉人一声。 */
+  let attached = false;
+  try {
+    const registry = serviceOf(ctx, 'workspaceRegistry');
+    const ws = registry && typeof registry.resolveByPath === 'function' && cwd ? await registry.resolveByPath(cwd) : null;
+    if (ws && typeof ws.attachSession === 'function') {
+      await ws.attachSession(childId);
+      attached = true;
+    }
+  } catch (error) {
+    log(`新会话没挂进工作区：${error?.message ?? error}`);
+  }
   /* 交接单由模型读懂原会话后写；调用记在新会话名下（它已经建好），原会话的记录不被改写。
    * 任何一步失败都退回确定性那份——转世本身不能因为整理失败而失败。 */
   let brief = fallback;
@@ -483,6 +496,7 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
     briefSaved && delivered === 'message' ? '交接单已经发到新会话里，它会先回一句「收到」等你下一步。' : briefSaved ? `交接单已经写入 ${briefPath}，下次打开新会话时按它接着干。` : '',
     model ? `交接单由 ${model.provider}/${model.model} 整理，${brief.text.length} 字。` : `交接单是自动摘要，${brief.text.length} 字：${llmNote || '没开模型整理'}。`,
     archived ? `原会话 ${sourceId} 已归档，需要细节时取消归档回看，不会删。` : `原会话 ${sourceId} 没有归档成功（工作区服务没接上），但记录都还在。`,
+    attached ? '' : `新会话没挂进左侧列表（${cwd ? '工作区对不上' : '原会话没有 cwd'}），重启后在列表里看不到它，要手动打开。`,
     '内存只有重启才拿得回来：重启前新会话可能有一个未完成回合，重启后打开它再发一句「继续」。',
     '血缘记在插件自己的记录里，改标题不会丢；要看链条用 lifeguard_lineage。',
   ];
@@ -562,7 +576,8 @@ async function handoffMany(ctx, { home, state, sessions, call, current, args }) 
 
 export function apply(ctx, config = {}) {
   const home = typeof config.home === 'string' && config.home ? config.home : DEFAULT_HOME;
-  const promptBudget = Number.isFinite(config.promptChars) ? Math.max(300, Math.min(2000, config.promptChars)) : 1000;
+  /* 0 = 不注入提示词：规则清单本身是给面板看的，塞进每一轮请求只会吃掉上下文。 */
+  const promptBudget = Number.isFinite(config.promptChars) ? Math.max(0, Math.min(2000, config.promptChars)) : 0;
 
   /* One live object per process, so a hot reload keeps the denial history and the
    * "already told the origin session" ledger instead of resetting them. */
@@ -698,7 +713,7 @@ export function apply(ctx, config = {}) {
   /* Resident section: the compact lore, re-read on every step so a rule recorded mid-session
    * takes effect without a restart. */
   const prompt = serviceOf(ctx, 'systemPrompt');
-  if (prompt && typeof prompt.context === 'function') {
+  if (promptBudget > 0 && prompt && typeof prompt.context === 'function') {
     ctx.effect(() => prompt.context({
       name: 'lifeguard: rules',
       order: 42,

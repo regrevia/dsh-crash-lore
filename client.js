@@ -38,7 +38,7 @@ window.__ModuleLoader__.load({
     function tipLines(state) {
       if (!state || !Number.isFinite(state.pct)) return ['内存读数还没到'];
       const lines = [`内存占用 ${state.heapMB}/${state.wallMB} MB`];
-      if (state.pct >= 100) lines.push('注意随时可能崩溃');
+      if (state.pct >= 100) lines.push('注意随时可能崩溃', '先交接再重开：lifeguard_handoff');
       return lines;
     }
 
