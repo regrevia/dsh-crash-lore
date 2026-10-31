@@ -288,6 +288,20 @@ function healthPayload(home) {
 
 /* 转世一个会话：读记录 → 写交接单 → 建子会话 → 改名 → 发交接单 → 归档原会话 → 记血缘。
  * 单次转世和批量转世共用这一份；失败返回 { ok:false, text }，由调用方原样上屏。 */
+/** 读一个会话当前的标题（日志里折出来的那份）；读不到返回空串，由事件推。 */
+async function readSessionTitle(ctx, sessionId, signal) {
+  const query = serviceOf(ctx, 'sessionQuery');
+  if (!query || typeof query.readTitle !== 'function') return '';
+  try {
+    const snapshot = await query.readTitle(sessionId, signal);
+    const title = typeof snapshot === 'string' ? snapshot : snapshot?.title;
+    return typeof title === 'string' ? clip(title.trim(), 60) : '';
+  } catch (error) {
+    log(`读不到 ${sessionId} 的标题：${error?.message ?? error}`);
+    return '';
+  }
+}
+
 async function handoffOne(ctx, { home, state, sessions, call, sourceId, current, knownIdle = false, args }) {
   /* 转世的前提是原会话已经收尾。别人还在跑的时候转世，旧回合会和接手的新会话同时写同一份
    * 工作，旧回合还会在归档后被腰斩（可能留下悬空 tool_calls）。自己转自己例外：当前这一轮
@@ -329,7 +343,10 @@ async function handoffOne(ctx, { home, state, sessions, call, sourceId, current,
   }
   const events = inspection?.events;
   /* 确定性那份先算：模型没答上来、堆太高不敢调、或者用户关掉 llm 时，转世也必须有交接单。 */
-  const fallback = buildBrief({ parentId: sourceId, events });
+  /* 标题得从会话自己的日志里折出来：事件流里没有标题行，只按事件推会退成「未命名会话」，
+   * 子会话就跟着叫「未命名会话 · 转世」。 */
+  const parentTitle = await readSessionTitle(ctx, sourceId, call);
+  const fallback = buildBrief({ parentId: sourceId, parentTitle, events });
   /* 参数里点了标题就用它：0.6.8 之前这里只认原标题，传了也白传。 */
   const asked = typeof args?.title === 'string' ? clip(args.title.trim(), 40) : '';
   const childTitle = asked || clip(`${fallback.title} · 转世`, 40);

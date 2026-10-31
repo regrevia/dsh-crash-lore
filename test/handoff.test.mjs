@@ -89,6 +89,14 @@ test('buildBrief 有来源、重点段落，且总长封顶', () => {
   assert.match(full.text, /失败：/);
 });
 
+test('buildBrief 用会话真标题，不从事件推成「未命名会话」', () => {
+  /* 事件流里没有标题行：只按事件推会退成「未命名会话」，子会话就跟着叫「未命名会话 · 转世」。 */
+  const brief = buildBrief({ parentId: 'session-old', parentTitle: '创作者中心平台', events, limit: 400 });
+  assert.equal(brief.title, '创作者中心平台');
+  const unnamed = buildBrief({ parentId: 'session-old', parentTitle: '', events, limit: 400 });
+  assert.notEqual(unnamed.title, '');
+});
+
 test('buildBrief 跨代保真：只发「继续」也不丢上一代的目标和约束', () => {
   const inherited = [
     '## 当前目标',
